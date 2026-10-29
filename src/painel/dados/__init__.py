@@ -29,6 +29,22 @@ def fonte_simulada_ligada() -> bool:
 
 
 @cache
+def sem_credencial_da_aws() -> bool:
+    """A faixa "Sem acesso à AWS" aparece quando a fonte é a real e a máquina não
+    tem credencial nenhuma. Olhada uma vez, na subida: o login feito depois só vale
+    com o painel reiniciado, porque os clientes da AWS guardam a credencial da subida."""
+    if _nome_da_fonte() != "real":
+        return False
+    import boto3
+    from botocore.exceptions import BotoCoreError
+
+    try:
+        return boto3.Session().get_credentials() is None
+    except BotoCoreError:
+        return True
+
+
+@cache
 def obter_fonte() -> FonteDeDados:
     from painel.dados.cache import CacheEmDisco, FonteComCache, pasta_padrao
 

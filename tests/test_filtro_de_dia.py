@@ -248,6 +248,18 @@ def test_a_leitura_que_falhou_nao_parece_funcionar() -> None:
     assert (texto, tom) == ("Sem leitura", "neutro") and "faltou ler" in detalhe
 
 
+def test_sem_nenhuma_leitura_o_caminho_nao_diz_que_funciona(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Quem roda sem credencial da AWS: nenhuma etapa lida não pode virar "tudo funciona".
+    agora = _da_tela("Agora")
+    dados = agora["ler_agora"](None)
+    falhou = FonteSimulada().verde_por_dia(Ambiente.PRODUCAO)
+    falhou = type(falhou)(None, Estado.INDISPONIVEL, falhou.fonte, falhou.lido_em, "sem credencial")
+    sem_leitura = [e._replace(leituras=[falhou]) for e in agora["etapas"](dados)]
+    monkeypatch.setitem(agora, "etapas", lambda _dados: sem_leitura)
+    textos = " ".join(_textos(agora["caminho_do_atendimento"](dados))).lower()
+    assert "faltou ler 11 etapas" in textos and "tudo o que rodou funciona" not in textos
+
+
 @pytest.mark.parametrize("escolha", ESCOLHAS, ids=NOMES_DAS_ESCOLHAS)
 def test_cada_escolha_segue_as_regras_em_toda_tela(escolha: Filtro, cenario: str) -> None:
     for nome, montado in _montagens(escolha).items():

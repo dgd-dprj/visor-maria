@@ -2,6 +2,22 @@
 
 Cada decisão com a data, quem decidiu, o motivo e o que ela custa.
 
+## 2026-10-29: quem roda sem credencial da AWS vê o porquê
+
+**Problema.** Outras pessoas baixaram o painel e viram a Agora quase sem números.
+Reproduzido nesta máquina, sem credencial da AWS: 21 das 23 leituras da Agora
+falham (só as do GitHub passam), cada quadro dizia "A fonte não respondeu.", e o
+caminho do atendimento dizia "tudo o que rodou funciona", com 1 de 11 etapas lida.
+
+**Decisão.** Uma faixa "Sem acesso à AWS" no topo de toda tela, olhada na
+subida; nos quadros, "Esta máquina não tem credencial da AWS, ou o login venceu"
+quando o erro é de credencial (falta, login vencido ou chave que não vale); e o
+caminho diz "faltou ler N etapas" quando nenhuma etapa lida está ruim. O README
+ganhou "Primeira vez", com o acesso, o login e o que cada aviso pede.
+
+**Custo.** O login feito com o painel aberto só vale depois de reiniciar, porque
+os clientes da AWS guardam a credencial da subida; a faixa e o README dizem isso.
+
 ## 2026-10-29: o nome passa a ser Visor Maria
 
 **Decisão.** O painel se chama Visor Maria, no menu, no título das abas e na

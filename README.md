@@ -53,6 +53,41 @@ volta ao normal. Um link com `?dia=2026-10-22` abre a tela já filtrada no dia.
 
 ## Como rodar
 
+### Primeira vez
+
+Sem credencial da AWS, o painel abre, mas quase todo número fica de fora (a
+Agora inteira, que é quase toda do CloudWatch). Só aparecem os que vêm do
+GitHub. Antes de rodar:
+
+1. **Acesso à AWS.** Peça ao Ícaro leitura na conta da Maria (região
+   `us-east-1`), com as permissões do item 6 de [Permissões](#permissões).
+2. **Login na AWS** com a [AWS CLI](https://docs.aws.amazon.com/cli/), no perfil
+   que o Ícaro indicar:
+
+   ```sh
+   aws login                     # ou: aws configure sso
+   aws sts get-caller-identity   # tem que mostrar a conta 185327115563
+   ```
+
+   Se o login não for no perfil padrão, diga ao painel qual é o perfil antes de
+   rodar: `AWS_PROFILE=nome` (bash) ou `$env:AWS_PROFILE = "nome"` (PowerShell).
+   Um perfil que não existe faz o painel falhar na subida.
+3. **Login no GitHub**, com uma conta que leia o `dgd-dprj/maria-langgraph-pp`:
+   `gh auth login`, ou um `GITHUB_TOKEN`.
+4. **Rode** (abaixo). A primeira abertura de cada tela leva de 10 a 40 segundos.
+
+O login feito com o painel já aberto só vale depois de reiniciar o painel. Como
+saber o que falta, pelo que a tela diz:
+
+| A tela diz | O que fazer |
+|---|---|
+| Faixa "Sem acesso à AWS" no topo, ou "Esta máquina não tem credencial da AWS, ou o login venceu" num quadro | Fazer o login (passo 2) e reiniciar o painel |
+| "Falta permissão de leitura nesta fonte" | A credencial vale, mas não lê aquela fonte: pedir ao Ícaro |
+| "Sem acesso ao GitHub" | Fazer o passo 3 |
+| "A fonte não respondeu" | Rede ou AWS fora do ar: a tela tenta de novo a cada minuto |
+
+Sem acesso nenhum, `PAINEL_FONTE=simulado` mostra o desenho com números inventados.
+
 ### Com Docker
 
 Precisa do Docker com o Compose.
@@ -63,6 +98,11 @@ docker compose up --build
 
 Abra http://localhost:8050. O container roda o painel com o gunicorn, sem modo
 de depuração.
+
+O container lê o perfil padrão da pasta `.aws` da máquina e não tem o `gh`:
+passe o token do GitHub na subida, com `GITHUB_TOKEN=$(gh auth token) docker
+compose up --build` (bash). Para outro perfil da AWS, acrescente
+`AWS_PROFILE: nome` em `environment`, no `compose.yaml`.
 
 > **Atenção:** a imagem Docker só foi testada à mão antes da mudança de visual de
 > 26/10. O job `imagem` do CI passa a conferir que ela constrói e responde, mas
@@ -95,6 +135,7 @@ $env:PAINEL_DEPURACAO = "1"; uv run python -m painel.app
 | Variável | Valores | Para quê |
 |---|---|---|
 | `PAINEL_FONTE` | `real` (padrão), `simulado` | De onde vêm os dados. `simulado` inventa os números, para conferir o desenho sem credencial, e põe a faixa "Dados simulados" no topo de toda tela. Um valor desconhecido faz o painel falhar na subida, e não no meio de uma tela. |
+| `AWS_PROFILE` | um perfil da AWS | O perfil com o login da AWS, quando não é o padrão. Lido pela AWS, e não pelo painel. |
 | `GITHUB_TOKEN` | um token | Leitura do repositório da Maria no GitHub. Sem ele, o painel usa o login do `gh` da máquina. |
 | `PAINEL_CENARIO` | `normal` (padrão), `vazio`, `falha` | O que o simulado devolve em todas as leituras. `vazio` e `falha` servem para conferir o texto próprio de cada estado. |
 | `PAINEL_DEPURACAO` | `1` | Liga o modo de depuração do Dash (só fora do Docker). |

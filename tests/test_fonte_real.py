@@ -119,3 +119,48 @@ def test_permissao_negada_vira_texto_sem_nome_tecnico(fonte: FonteReal, monkeypa
     leitura = fonte.gasto_por_assunto(Ambiente.PRODUCAO, date(2026, 10, 26))
     assert leitura.estado is Estado.INDISPONIVEL
     assert leitura.motivo == "Falta permissão de leitura nesta fonte (pedido ao Ícaro)."
+
+
+def test_sem_credencial_a_tela_diz_o_que_fazer(fonte: FonteReal, monkeypatch: pytest.MonkeyPatch) -> None:
+    from botocore.exceptions import ClientError, NoCredentialsError
+
+    from painel.dados.real import SEM_CREDENCIAL_DA_AWS
+
+    def sem_credencial(*_: Any, **__: Any) -> Any:
+        raise NoCredentialsError()
+
+    monkeypatch.setattr(fonte, "_consultar", sem_credencial)
+    leitura = fonte.tempo_de_resposta(Ambiente.PRODUCAO, None)
+    assert leitura.estado is Estado.INDISPONIVEL and leitura.motivo == SEM_CREDENCIAL_DA_AWS
+
+    def login_vencido(*_: Any, **__: Any) -> Any:
+        raise ClientError({"Error": {"Code": "ExpiredTokenException", "Message": ""}}, "StartQuery")
+
+    monkeypatch.setattr(fonte, "_consultar", login_vencido)
+    assert fonte.tempo_de_resposta(Ambiente.PRODUCAO, None).motivo == SEM_CREDENCIAL_DA_AWS
+
+
+def test_a_faixa_sem_aws_so_aparece_sem_credencial(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from painel import dados
+
+    vazio = tmp_path / "aws"
+    vazio.write_text("")
+    for nome in ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN", "AWS_PROFILE"):
+        monkeypatch.delenv(nome, raising=False)
+    monkeypatch.setenv("AWS_CONFIG_FILE", str(vazio))
+    monkeypatch.setenv("AWS_SHARED_CREDENTIALS_FILE", str(vazio))
+    monkeypatch.setenv("AWS_EC2_METADATA_DISABLED", "true")
+    monkeypatch.setenv("PAINEL_FONTE", "real")
+    dados.sem_credencial_da_aws.cache_clear()
+    try:
+        assert dados.sem_credencial_da_aws()
+        monkeypatch.setenv("AWS_ACCESS_KEY_ID", "falso")
+        monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "falso")
+        dados.sem_credencial_da_aws.cache_clear()
+        assert not dados.sem_credencial_da_aws()
+        monkeypatch.setenv("PAINEL_FONTE", "simulado")
+        monkeypatch.delenv("AWS_ACCESS_KEY_ID")
+        dados.sem_credencial_da_aws.cache_clear()
+        assert not dados.sem_credencial_da_aws()
+    finally:
+        dados.sem_credencial_da_aws.cache_clear()

@@ -7,6 +7,7 @@ O relógio `relogio` dispara a atualização de todas as telas a cada minuto.
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 
@@ -16,7 +17,7 @@ from dash import ALL, Dash, Input, Output, State, clientside_callback, dcc, html
 from painel import navegador
 from painel.componentes.cabecalho import TEMAS
 from painel.componentes.menu import menu
-from painel.dados import fonte_simulada_ligada, obter_fonte
+from painel.dados import fonte_simulada_ligada, obter_fonte, sem_credencial_da_aws
 
 PASTA = Path(__file__).parent
 ATUALIZACAO_MS = 60_000
@@ -72,13 +73,31 @@ FAIXA_DE_SIMULADO = html.P(
     role="note",
 )
 
+# Quem acaba de baixar o painel e roda sem credencial da AWS vê quase toda tela
+# vazia (a Agora inteira); a faixa diz por quê e o que fazer, antes de cada quadro.
+FAIXA_SEM_AWS = html.P(
+    [
+        html.Strong("Sem acesso à AWS:"),
+        " esta máquina não tem credencial da AWS, então os números que vêm do CloudWatch não aparecem; só os do GitHub. "
+        "Faça o login e reinicie o painel (README, em Primeira vez), ou rode com PAINEL_FONTE=simulado para ver o desenho.",
+    ],
+    className="faixa-de-simulado",
+    role="note",
+)
+if sem_credencial_da_aws():
+    logging.getLogger(__name__).warning("Sem credencial da AWS nesta máquina: os quadros do CloudWatch vão aparecer sem número (README, em Primeira vez).")
+
 app.layout = html.Div(
     [
         dcc.Location(id="url"),
         dcc.Store(id="tema", storage_type="local"),
         dcc.Interval(id="relogio", interval=ATUALIZACAO_MS),
         *menu(),
-        html.Main([FAIXA_DE_SIMULADO if fonte_simulada_ligada() else None, dash.page_container], id="conteudo", className="conteudo"),
+        html.Main(
+            [FAIXA_DE_SIMULADO if fonte_simulada_ligada() else None, FAIXA_SEM_AWS if sem_credencial_da_aws() else None, dash.page_container],
+            id="conteudo",
+            className="conteudo",
+        ),
     ],
     className="moldura",
 )

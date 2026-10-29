@@ -641,8 +641,9 @@ def caminho_do_atendimento(dados: LeiturasDaAgora) -> html.Section:
     linhas, contas = [], Counter[str]()
     todas = etapas(dados)
     for etapa in todas:
-        (texto, tom), detalhe = _estado_da_etapa(etapa)
-        contas[tom] += 1
+        estado, detalhe = _estado_da_etapa(etapa)
+        texto, tom = estado
+        contas["sem leitura" if estado == SEM_LEITURA else tom] += 1
         nome_da_tela, caminho = etapa.tela
         linhas.append(
             html.Tr(
@@ -666,6 +667,9 @@ def caminho_do_atendimento(dados: LeiturasDaAgora) -> html.Section:
         resumo, tom_do_resumo = f"{contagem(ruins, 'etapa não funciona', 'etapas não funcionam')}", "ruim"
     elif atencao:
         resumo, tom_do_resumo = f"{contagem(atencao, 'etapa com problema', 'etapas com problema')}", "atencao"
+    elif contas["sem leitura"]:
+        # Sem leitura não é "tudo funciona": quem roda sem credencial veria tudo verde.
+        resumo, tom_do_resumo = f"faltou ler {contagem(contas['sem leitura'], 'etapa', 'etapas')}", "neutro"
     else:
         resumo, tom_do_resumo = "tudo o que rodou funciona", "bom"
     lateral = [selo(resumo, tom_do_resumo), html.Span(f" {funcionam} de {len(todas)} funcionam; {NOME_DO_AMBIENTE[dados.ambiente].lower()}, {_quando(dados)}")]

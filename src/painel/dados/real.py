@@ -32,7 +32,16 @@ from typing import Any
 
 import boto3
 from botocore.config import Config
-from botocore.exceptions import BotoCoreError, ClientError
+from botocore.exceptions import (
+    BotoCoreError,
+    ClientError,
+    CredentialRetrievalError,
+    LoginError,
+    NoCredentialsError,
+    PartialCredentialsError,
+    SSOError,
+    TokenRetrievalError,
+)
 
 from painel.dados import fontes
 from painel.dados.cache import CacheEmDisco
@@ -133,6 +142,13 @@ PROBLEMAS_POR_EVENTO = (
 FUNCOES_DE_IA = ("classificar", "desambiguar", "extrair", "reescrever", "sumarizar")
 SUBIDAS_DO = {Ambiente.PRODUCAO: "deploy-prod.yml", Ambiente.RELEASE: "deploy-release.yml"}
 NOME_NA_CONFERENCIA = {Ambiente.PRODUCAO: "prod", Ambiente.RELEASE: "release"}
+
+
+# Sem credencial na máquina, ou com o login vencido: é o caso de quem acabou de
+# baixar o painel, e a tela diz o que fazer em vez de "a fonte não respondeu".
+SEM_CREDENCIAL_DA_AWS = "Esta máquina não tem credencial da AWS, ou o login venceu. Faça o login e reinicie o painel (README, em Primeira vez)."
+ERROS_DE_CREDENCIAL = (NoCredentialsError, PartialCredentialsError, CredentialRetrievalError, TokenRetrievalError, SSOError, LoginError)
+CODIGOS_DE_CREDENCIAL = ("ExpiredToken", "ExpiredTokenException", "UnrecognizedClientException", "InvalidClientTokenId", "InvalidSignatureException")
 
 
 class FalhaDeLeitura(Exception):
@@ -309,7 +325,12 @@ class FonteReal:
             registro.warning("leitura recusada: %s (%s)", fonte.nome, codigo)
             negado = "AccessDenied" in codigo or "Unauthorized" in codigo
             motivo = "Falta permissão de leitura nesta fonte (pedido ao Ícaro)." if negado else "A AWS recusou a consulta agora."
+            if codigo in CODIGOS_DE_CREDENCIAL:
+                motivo = SEM_CREDENCIAL_DA_AWS
             return Leitura(None, Estado.INDISPONIVEL, fonte, momento, motivo)
+        except ERROS_DE_CREDENCIAL as erro:
+            registro.warning("leitura sem credencial da AWS: %s (%s)", fonte.nome, type(erro).__name__)
+            return Leitura(None, Estado.INDISPONIVEL, fonte, momento, SEM_CREDENCIAL_DA_AWS)
         except (BotoCoreError, OSError, TimeoutError) as erro:
             registro.warning("leitura falhou: %s (%s)", fonte.nome, type(erro).__name__)
             return Leitura(None, Estado.INDISPONIVEL, fonte, momento, "A fonte não respondeu.")
