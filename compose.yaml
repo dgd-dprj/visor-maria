@@ -1,0 +1,18 @@
+services:
+  painel:
+    build: .
+    ports:
+      - "8050:8050"
+    environment:
+      # real (CloudWatch e GitHub) ou simulado (números inventados, com a faixa no topo).
+      PAINEL_FONTE: ${PAINEL_FONTE:-real}
+      # Só no simulado: normal, vazio ou falha, o que ele devolve em todas as leituras.
+      PAINEL_CENARIO: ${PAINEL_CENARIO:-normal}
+      # Leitura das rotinas e da conferência diária no GitHub (escopo repo, só leitura).
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+      AWS_REGION: us-east-1
+      # Cache das leituras numa pasta só do painel, dividida pelos dois processos.
+      PAINEL_CACHE: /tmp/visor-maria-cache
+    volumes:
+      # As credenciais AWS da máquina, só leitura. No ECS, o papel da tarefa substitui isto.
+      - ${HOME:-${USERPROFILE}}/.aws:/home/painel/.aws:ro

@@ -1,0 +1,99 @@
+name: CI
+
+# Três verificações:
+# - `verificar`: lint, formatação, tipos e testes, em todo PR e push para main;
+# - `contrato`: os nomes de evento e de campo que o painel lê dos logs da Maria
+#   ainda existem no código dela. Roda também todo dia, porque a Maria muda em
+#   outro repositório: sem isso, uma renomeação lá quebra o painel em silêncio;
+# - `imagem`: a imagem Docker constrói e responde.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "0 10 * * *" # 07:00 em Brasília
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  verificar:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Instalar Python (versão de .python-version) e dependências
+        run: uv sync --frozen
+
+      - name: Lint
+        run: uv run ruff check
+
+      - name: Formatação
+        run: uv run ruff format --check
+
+      - name: Tipos
+        run: uv run mypy
+
+      - name: Testes
+        run: uv run pytest
+
+  contrato:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false # uma branch da Maria quebrada não esconde a outra
+      matrix:
+        branch_da_maria: [main, develop]
+    steps:
+      - uses: actions/checkout@v4
+
+      # O maria-langgraph-pp é público: não precisa de token para clonar.
+      - name: Clonar a Maria (${{ matrix.branch_da_maria }})
+        uses: actions/checkout@v4
+        with:
+          repository: dgd-dprj/maria-langgraph-pp
+          ref: ${{ matrix.branch_da_maria }}
+          path: maria
+
+      - name: Instalar uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Instalar Python e dependências
+        run: uv sync --frozen
+
+      - name: Refazer o retrato do código da Maria
+        run: uv run python scripts/extrair_contrato_da_maria.py maria --branch ${{ matrix.branch_da_maria }}
+
+      - name: O que mudou no retrato
+        run: git diff --stat -- tests/fixtures/maria/contrato_extraido.json && git diff -- tests/fixtures/maria/contrato_extraido.json
+
+      - name: Conferir o contrato
+        run: uv run pytest tests/test_contrato_da_maria.py
+
+  imagem:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build da imagem
+        run: docker build -t visor-maria:ci .
+
+      - name: A imagem sobe e responde
+        run: |
+          docker run -d --name painel -p 8050:8050 visor-maria:ci
+          for _ in $(seq 1 30); do
+            if curl -fsS http://localhost:8050/ > /dev/null; then
+              for tela in /credencial /atendimento /fluxos /sistema /dia /aplicacao /ia; do
+                curl -fsS "http://localhost:8050$tela" > /dev/null
+              done
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs painel
+          exit 1
