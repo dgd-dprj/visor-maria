@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+dist/
+.env
+*.log
+
+# Export do rascunho (1,5 MB, quase tudo fonte em base64): fica fora do git,
+# por decisão de 26/10 (docs/decisoes.md).
+Painel da Maria.html
