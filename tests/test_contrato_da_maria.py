@@ -83,7 +83,9 @@ def _identificadores_das_fontes() -> list[str]:
     produtores = [getattr(fontes, nome) for nome in dir(fontes) if nome.startswith("fonte_")]
     identificadores = []
     for produtor in produtores:
-        for argumentos in ((Ambiente.PRODUCAO,), (Origem.PRODUCAO_PY,), ()):
+        # Sem argumento primeiro: uma fonte de dia opcional (a CPU e a latência, dos dois
+        # ambientes) não pode receber o ambiente no lugar do dia.
+        for argumentos in ((), (Ambiente.PRODUCAO,), (Origem.PRODUCAO_PY,)):
             try:
                 identificadores.append(produtor(*argumentos).identificador)
                 break

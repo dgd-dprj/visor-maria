@@ -485,7 +485,8 @@ def _erros_por_hora(horas: list[RequisicoesPorHora], tema: str | None, escolha: 
 
 def do_sistema(ambiente: Ambiente, tema: str | None, escolha: Filtro = Filtro()) -> list[Any]:
     """Só o que é do Sistema: o tempo de resposta dia a dia e os erros de servidor hora a hora.
-    As requisições e CPU e memória ficam na Agora; a demora do modelo, no Observatório da IA."""
+    As requisições e CPU e memória ficam na Agora; a CPU e a latência por hora, no corpo do
+    Sistema; a demora do modelo, no Observatório da IA."""
     fonte, agora = obter_fonte(), datetime.now(FUSO)
     hoje = agora.date()
     pedidos = ler_ja(partial(fonte.requisicoes_por_hora, ambiente, escolha.dia))

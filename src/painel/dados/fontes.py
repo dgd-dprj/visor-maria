@@ -20,6 +20,7 @@ from painel.dados.modelo import (
     ContagemPorDia,
     ContagemPorHora,
     ConversasDoFluxo,
+    CpuELatencia,
     Credencial,
     Desfecho,
     DesfechoDoFluxo,
@@ -304,6 +305,18 @@ def fonte_recursos_do_servico(ambiente: Ambiente) -> Fonte:
     )
 
 
+def fonte_cpu_e_latencia(dia: date | None = None) -> Fonte:
+    return Fonte(
+        curto="ECS e balanceador",
+        nome=f"CPU do serviço e latência p99 do balanceador por hora, {_quando('nas últimas 24 horas', dia)}, produção e release",
+        identificador=(
+            f"AWS/ECS CPUUtilization (média), serviços {SERVICO_ECS[Ambiente.PRODUCAO]} e {SERVICO_ECS[Ambiente.RELEASE]}; "
+            f"AWS/ApplicationELB TargetResponseTime (p99), {TARGET_GROUP[Ambiente.PRODUCAO]} e {TARGET_GROUP[Ambiente.RELEASE]}"
+        ),
+        atraso="cerca de 1 minuto",
+    )
+
+
 def fonte_horarios_da_conferencia() -> Fonte:
     return Fonte(
         curto="GitHub",
@@ -493,6 +506,8 @@ class FonteDeDados(Protocol):
     def requisicoes_por_hora(self, ambiente: Ambiente, dia: date | None = None) -> Leitura[list[RequisicoesPorHora]]: ...
 
     def recursos_do_servico(self, ambiente: Ambiente) -> Leitura[RecursosDoServico]: ...
+
+    def cpu_e_latencia(self, dia: date | None = None) -> Leitura[list[CpuELatencia]]: ...
 
     def horarios_da_conferencia(self) -> Leitura[list[HorarioDaConferencia]]: ...
 

@@ -429,6 +429,17 @@ class RecursosDoServico:
 
 
 @dataclass(frozen=True)
+class CpuELatencia:
+    """Uma hora de um ambiente: a CPU média do serviço ECS (%) e a latência p99 do
+    balanceador (s), os dois gráficos que o Grafana mostrava. None: a hora sem ponto."""
+
+    hora: datetime
+    ambiente: Ambiente
+    cpu: float | None
+    p99: float | None
+
+
+@dataclass(frozen=True)
 class HorarioDaConferencia:
     """A que horas a conferência diária começou, contra o agendado (9h)."""
 

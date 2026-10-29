@@ -15,15 +15,17 @@ Duas diferenças do rascunho, por falta de fonte:
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import date, datetime, timedelta
 from functools import partial
 from typing import Any
 
 import dash
+import plotly.graph_objects as go
 from dash import Input, Output, callback, html
 
 from painel import lateral
-from painel.componentes import filtro_de_dia
+from painel.componentes import filtro_de_dia, graficos
 from painel.componentes.blocos import (
     Tom,
     Valor,
@@ -36,7 +38,7 @@ from painel.componentes.blocos import (
 from painel.componentes.cabecalho import cabecalho, filtro_de_ambiente
 from painel.componentes.filtro_de_dia import Filtro
 from painel.componentes.formato import contagem, data_curta, dinheiro, lista, numero, segundos
-from painel.dados.modelo import FUSO, Ambiente, DuracaoDoVerde, Estado, Leitura, RespostasComErro, ResultadoDoVerde, Rotina
+from painel.dados.modelo import FUSO, NOME_DO_AMBIENTE, Ambiente, CpuELatencia, DuracaoDoVerde, Estado, Leitura, RespostasComErro, ResultadoDoVerde, Rotina
 from painel.dados.telas import LeiturasDoSistema, dias_passados, ler_sistema, montar_ja, preparar
 from painel.lateral import coluna, com_lateral
 from painel.precos import Parcela, parcelas
@@ -88,6 +90,115 @@ def _indicadores(dados: LeiturasDoSistema) -> list[html.Section]:
             className="indicador reservado",
         ),
     ]
+
+
+# ── CPU e latência por hora (o que o Grafana mostrava) ────────────────────
+
+# Os limites dos alertas do Grafana (infra/grafana/alerts/saude-operacional.json na
+# maria-langgraph-pp, lido em 29/10): CPU acima de 80% por 5 min, p99 acima de 3 s por 15 min.
+LIMITE_DA_CPU = 80.0
+LIMITE_DO_P99 = 3.0
+COR_DO_AMBIENTE: dict[Ambiente, Tom] = {Ambiente.PRODUCAO: "azul", Ambiente.RELEASE: "rosa"}
+
+
+def _por_ambiente(linhas: list[CpuELatencia], campo: str, tema: str | None, escolha: Filtro, limite: float, sufixo: str, nome: str, casas: str) -> go.Figure:
+    """Uma linha por ambiente, hora a hora, com a linha tracejada do limite do alerta."""
+    c = graficos.cores(tema)
+    figura = go.Figure()
+    for ambiente in Ambiente:
+        do_ambiente = [x for x in linhas if x.ambiente is ambiente]
+        figura.add_scatter(
+            x=[x.hora for x in do_ambiente],
+            y=[getattr(x, campo) for x in do_ambiente],
+            mode="lines+markers",
+            line={"color": c[COR_DO_AMBIENTE[ambiente]]},
+            # Pontos grandes: o clique numa hora filtra a tela.
+            marker={"size": 8},
+            name=NOME_DO_AMBIENTE[ambiente].lower(),
+            customdata=[x.hora.isoformat() for x in do_ambiente],
+            hovertemplate=f"%{{x|%Hh}}, {NOME_DO_AMBIENTE[ambiente].lower()}: {nome} %{{y:{casas}}}{sufixo}<extra></extra>",
+        )
+    figura.update_layout(**graficos.layout_base(tema), height=220, separators=",.")
+    figura.update_xaxes(showgrid=False, fixedrange=True, tickformat="%Hh")
+    figura.update_yaxes(showgrid=True, gridcolor=c["grade"], fixedrange=True, rangemode="tozero", ticksuffix=sufixo)
+    valores = [v for x in linhas if (v := getattr(x, campo)) is not None]
+    # O limite só entra no eixo quando os valores chegam perto dele: CPU de 0,5% contra 80% viraria uma linha reta.
+    if max(valores, default=0) >= limite / 2:
+        figura.add_hline(y=limite, line={"color": c["ruim"], "dash": "dash", "width": 1})
+    escolhida = escolha.quando if isinstance(escolha.quando, datetime) else None
+    if escolhida is not None:
+        figura.add_vrect(x0=escolhida, x1=escolhida + timedelta(hours=1), fillcolor=c["suave"], opacity=0.18, line_width=0)
+    return figura
+
+
+def _resumo_da_cpu(linhas: list[CpuELatencia], ambiente: Ambiente) -> str:
+    cpus = [x.cpu for x in linhas if x.ambiente is ambiente and x.cpu is not None]
+    if not cpus:
+        return f"{NOME_DO_AMBIENTE[ambiente]}: sem ponto de CPU."
+    longe = " longe do" if max(cpus) < LIMITE_DA_CPU / 2 else " perto do" if max(cpus) <= LIMITE_DA_CPU else " acima do"
+    return f"{NOME_DO_AMBIENTE[ambiente]}: até {segundos(max(cpus))}%,{longe} limite do alerta ({LIMITE_DA_CPU:.0f}%)."
+
+
+def _resumo_do_p99(linhas: list[CpuELatencia], ambiente: Ambiente) -> str:
+    lentas = [x for x in linhas if x.ambiente is ambiente and x.p99 is not None and x.p99 > LIMITE_DO_P99]
+    if not lentas:
+        return f"{NOME_DO_AMBIENTE[ambiente]}: sempre abaixo de {LIMITE_DO_P99:.0f} s."
+    pior = max(lentas, key=lambda x: x.p99 or 0)
+    assert pior.p99 is not None
+    return f"{NOME_DO_AMBIENTE[ambiente]}: acima de {LIMITE_DO_P99:.0f} s em {contagem(len(lentas), 'hora', 'horas')}; o pior às {pior.hora:%H}h, {segundos(pior.p99)} s."
+
+
+def _grafico_por_ambiente(
+    dados: LeiturasDoSistema,
+    tema: str | None,
+    campo: str,
+    titulo: str,
+    limite: str,
+    montar: Callable[[list[CpuELatencia]], go.Figure],
+    resumo: Callable[..., str],
+) -> html.Section:
+    leitura = dados.cpu_e_latencia
+    if leitura is None:
+        return quadro(titulo, html.P("Esta leitura não entrou nesta rodada.", className="texto-vazio"), [], dados.agora)
+
+    def corpo(linhas: list[CpuELatencia]) -> list[Any]:
+        figura = montar(linhas)
+        itens = [html.Span([html.Span(className=f"legenda-cor tom-{COR_DO_AMBIENTE[a]}"), NOME_DO_AMBIENTE[a].lower()]) for a in Ambiente]
+        if any(forma.type == "line" for forma in figura.layout.shapes):
+            itens.append(html.Span([html.Span(className="legenda-cor tom-ruim"), "limite do alerta"]))
+        return [
+            filtro_de_dia.grafico("sistema", campo, figura, por="hora"),
+            html.Div(itens, className="legenda"),
+            html.Div([html.P(resumo(linhas, a), className="quadro-explicacao") for a in Ambiente], className="miolo"),
+        ]
+
+    vazio = f"O ECS e o balanceador não mandaram ponto {_janela(dados, 'nas últimas 24 horas')}."
+    return quadro(titulo, celula_de_leitura(leitura, corpo, vazio), [leitura], dados.agora, lateral=f"produção e release; {limite}; clique numa hora")
+
+
+def _cpu_e_latencia(dados: LeiturasDoSistema, tema: str | None) -> html.Div:
+    """Os dois gráficos que eram do Grafana (painel "Maria — Observabilidade"), com os dois ambientes."""
+    quando = dados.dia
+    escolha = Filtro(filtro_de_dia.dia_de(quando), quando.astimezone(FUSO).hour if isinstance(quando, datetime) else None)
+    cpu = _grafico_por_ambiente(
+        dados,
+        tema,
+        "cpu",
+        "CPU do serviço por hora",
+        f"alerta acima de {LIMITE_DA_CPU:.0f}%",
+        lambda linhas: _por_ambiente(linhas, "cpu", tema, escolha, LIMITE_DA_CPU, "%", "CPU", ".1f"),
+        _resumo_da_cpu,
+    )
+    p99 = _grafico_por_ambiente(
+        dados,
+        tema,
+        "latencia",
+        "Latência p99 do balanceador por hora",
+        f"alerta acima de {LIMITE_DO_P99:.0f} s",
+        lambda linhas: _por_ambiente(linhas, "p99", tema, escolha, LIMITE_DO_P99, " s", "p99", ".2f"),
+        _resumo_do_p99,
+    )
+    return html.Div([cpu, p99], className="grade-dupla")
 
 
 # ── Quanto o Verde demora ─────────────────────────────────────────────────
@@ -387,10 +498,11 @@ def _rotinas(dados: LeiturasDoSistema) -> html.Section:
 # ── Montagem ──────────────────────────────────────────────────────────────
 
 
-def blocos(ambiente: Ambiente, dia: date | None = None) -> list[Any]:
+def blocos(ambiente: Ambiente, dia: date | None = None, tema: str | None = None) -> list[Any]:
     dados = ler_sistema(ambiente, dia)
     return [
         html.Div(_indicadores(dados), className="grade-indicadores grade-quatro"),
+        _cpu_e_latencia(dados, tema),
         html.Div([_quanto_demora(dados), _verde_falhou(dados)], className="grade-dupla"),
         _arquitetura(dados),
         html.Div([_respostas_com_erro(dados), _rotinas(dados)], className="grade-dupla"),
@@ -398,7 +510,7 @@ def blocos(ambiente: Ambiente, dia: date | None = None) -> list[Any]:
     ]
 
 
-FILTRADO = "O tempo de resposta, o Verde, cada parte da arquitetura, as respostas com erro e os erros por hora mostram esse dia."
+FILTRADO = "O tempo de resposta, o Verde, cada parte da arquitetura, as respostas com erro, os erros por hora e a CPU e a latência mostram esse dia."
 DE_AGORA = "As rotinas e CPU e memória continuam sendo de agora."
 filtro_de_dia.registrar("sistema", FILTRADO, DE_AGORA)
 
@@ -419,15 +531,16 @@ def _tela(dia: date | None) -> html.Div:
     )
 
 
+# Sem prevent_initial_call: na subida, aplica o tema guardado no navegador aos gráficos.
 @callback(
     Output("sistema-corpo", "children"),
     Input("relogio", "n_intervals"),
     Input("sistema-ambiente", "value"),
+    Input("tema", "data"),
     filtro_de_dia.entrada("sistema"),
-    prevent_initial_call=True,
 )
-def atualizar(_: int | None, ambiente: str | None, dia: str | None) -> list[Any]:
-    return blocos(Ambiente(ambiente or Ambiente.PRODUCAO.value), filtro_de_dia.escolhido(dia))
+def atualizar(_: int | None, ambiente: str | None, tema: str | None, dia: str | None) -> list[Any]:
+    return blocos(Ambiente(ambiente or Ambiente.PRODUCAO.value), filtro_de_dia.escolhido(dia), tema)
 
 
 def layout(dia: str | None = None, **_: str) -> html.Div:
@@ -437,6 +550,7 @@ def layout(dia: str | None = None, **_: str) -> html.Div:
     for passado in dias_passados(14, agora):
         for consulta in ("tempo_de_resposta", "duracao_do_verde", "resultado_do_verde", "respostas_com_erro", "requisicoes_por_hora"):
             preparar(consulta, Ambiente.PRODUCAO, passado)
+        preparar("cpu_e_latencia", passado)
     lado = montar_ja(partial(lateral.do_sistema, Ambiente.PRODUCAO, None, Filtro(escolhido)))
     return com_lateral(_tela(escolhido), coluna("sistema-lateral", lado.result()))
 

@@ -2,6 +2,36 @@
 
 Cada decisão com a data, quem decidiu, o motivo e o que ela custa.
 
+## 2026-10-29: CPU e latência p99 no Sistema (issue #3)
+
+**Decisão.** Os dois gráficos do painel "Maria — Observabilidade" do Grafana
+(`infra/grafana/dashboards/observabilidade.json`) vão para o corpo do Sistema,
+logo abaixo dos indicadores, em dois quadros: CPU média do serviço ECS
+(`AWS/ECS` `CPUUtilization`) e p99 do balanceador (`TargetResponseTime`), hora a
+hora, produção e release juntos, como no Grafana, e por isso fora do filtro de
+ambiente. O clique numa hora filtra a tela; com um dia escolhido, o quadro mostra
+o dia inteiro. A linha tracejada é o limite do alerta do Grafana (80% e 3 s) e só
+aparece quando os valores chegam à metade dele: CPU de 0,5% contra 80% viraria
+uma linha reta no chão.
+
+**Levantamento de 29/10, 16h, em produção.** A CPU não passa de 2% nos dois
+ambientes. O p99 de produção ficou acima de 3 s em 16 das últimas 24 horas, com
+pico de 29,1 s às 14h: a regra "latência p99 alta" do Grafana (acima de 3 s por
+15 minutos) estaria disparando boa parte do dia. Vale conferir na #2 se o limite
+faz sentido para a Maria, que espera o Verde por até 30 s.
+
+## 2026-10-29: o Visor substitui o Grafana
+
+**Decisão.** O Grafana vai ser desligado; o monitoramento da Maria passa a ser o
+Visor Maria. Informado por Nicole.
+
+**O que isso pede.** Hoje o Visor lê com a credencial pessoal de quem o roda: no
+mesmo dia, a usuária da Nicole perdeu a consulta aos logs da Maria (`logs:StartQuery`
+e `logs:FilterLogEvents` negados desde cerca de 16h; métricas e GitHub seguem) e
+todos os números que vêm dos logs pararam. Para ser o monitoramento, o Visor
+precisa rodar na tarefa própria, com o papel só de leitura (README, Permissões),
+e não depender do login de uma pessoa.
+
 ## 2026-10-29: quem roda sem credencial da AWS vê o porquê
 
 **Problema.** Outras pessoas baixaram o painel e viram a Agora quase sem números.

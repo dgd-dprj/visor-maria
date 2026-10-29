@@ -310,7 +310,7 @@ da Maria (as três regras estão em `docs/decisoes.md`).
 5. **Um papel para aplicar o Terraform do painel**, restrito a recursos com prefixo `visor-maria`. Com ele, a Nicole aplica dali em diante sem acesso a nada da Maria. (A credencial dela hoje não cria recursos na AWS, pelo que os testes de leitura mostraram; ela não tem permissão nem para simular a própria política.)
 6. **Papel da tarefa do painel, só leitura:**
    - Logs Insights nos grupos `/ecs/maria-langgraph-pp/api` e `/ecs/maria-langgraph-pp-release/api`: `logs:StartQuery`, `logs:GetQueryResults`, `logs:StopQuery` e `logs:DescribeLogGroups`;
-   - métricas: `cloudwatch:GetMetricData` e `cloudwatch:ListMetrics` (`AWS/ApplicationELB`, `ECS/ContainerInsights`, `AWS/Bedrock`); o `GetMetricData` exige `"Resource": "*"`;
+   - métricas: `cloudwatch:GetMetricData` e `cloudwatch:ListMetrics` (`AWS/ApplicationELB`, `AWS/ECS`, `ECS/ContainerInsights`, `AWS/Bedrock`); o `GetMetricData` exige `"Resource": "*"`;
    - opcionais: `pricing:GetProducts`, para conferir preço, e `rds:DescribeDBInstances`, para o rateio do stack antigo.
 7. **Papel de deploy do GitHub** que confie em `repo:dgd-dprj/visor-maria:ref:refs/heads/main`, usando o provedor OIDC que já existe (consultado por nome, sem mexer nele nem no papel da Maria), com push só no ECR do painel e `ecs:UpdateService`/`ecs:DescribeServices` só no serviço do painel.
 8. **Infraestrutura da etapa 1:** repositório ECR `visor-maria`, cluster ECS próprio (sem Container Insights), tarefa e serviço Fargate em subrede privada com ECS Exec ligado, grupo de segurança sem entrada, grupo de logs, segredo do token do GitHub e papel de execução que o lê. Sem balanceador e sem CloudFront.

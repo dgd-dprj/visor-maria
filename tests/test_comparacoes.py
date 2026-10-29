@@ -7,7 +7,9 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 
 from painel import lateral
-from painel.dados.modelo import FUSO, Destino, EncaminhamentoNoDia, Estado, Fonte, Leitura, ProblemaNoDia, TempoDeResposta
+from painel.componentes.filtro_de_dia import Filtro
+from painel.dados.modelo import FUSO, Ambiente, CpuELatencia, Destino, EncaminhamentoNoDia, Estado, Fonte, Leitura, ProblemaNoDia, TempoDeResposta
+from tests.test_filtro_de_dia import _da_tela
 from tests.test_regras_de_texto import _textos
 
 DIA = date(2026, 10, 28)
@@ -61,3 +63,29 @@ def test_cada_problema_do_dia_diz_o_que_aconteceu_com_a_conversa() -> None:
     textos = " ".join(_textos(lateral._problemas_do_dia(problemas, encerrados, DIA)))
     assert "A conversa foi para atendimento humano." in textos and "A resposta não chegou à pessoa." in textos
     assert "Falha ao cadastrar" in textos and "expirou" not in textos
+
+
+def _horas(p99s: list[float | None], cpu: float = 0.5) -> list[CpuELatencia]:
+    inicio = datetime(2026, 10, 29, 0, tzinfo=FUSO)
+    return [CpuELatencia(inicio + timedelta(hours=n), a, cpu, p) for a in Ambiente for n, p in enumerate(p99s)]
+
+
+def test_o_resumo_conta_as_horas_acima_do_limite_do_alerta() -> None:
+    sistema = _da_tela("Sistema")
+    linhas = _horas([0.4, 29.1, 9.9, None])
+    assert sistema["_resumo_do_p99"](linhas, Ambiente.PRODUCAO) == "Produção: acima de 3 s em 2 horas; o pior às 01h, 29,1 s."
+    assert sistema["_resumo_do_p99"](_horas([0.4, 1.0]), Ambiente.RELEASE) == "Release: sempre abaixo de 3 s."
+    assert sistema["_resumo_da_cpu"](linhas, Ambiente.PRODUCAO) == "Produção: até 0,5%, longe do limite do alerta (80%)."
+
+
+def test_a_linha_do_limite_so_aparece_perto_dele() -> None:
+    # CPU de 0,5% contra o limite de 80%: sem linha; p99 de 29 s contra 3 s: com.
+    sistema = _da_tela("Sistema")
+
+    def linhas_do_limite(campo: str, limite: float, horas: list[CpuELatencia]) -> int:
+        figura = sistema["_por_ambiente"](horas, campo, None, Filtro(), limite, "", campo, ".1f")
+        return sum(forma.type == "line" for forma in figura.layout.shapes)
+
+    assert linhas_do_limite("cpu", 80.0, _horas([0.4, 29.1])) == 0
+    assert linhas_do_limite("p99", 3.0, _horas([0.4, 29.1])) == 1
+    assert linhas_do_limite("p99", 3.0, _horas([0.4, 0.6])) == 0

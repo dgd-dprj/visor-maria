@@ -26,6 +26,7 @@ from painel.dados.modelo import (
     Assunto,
     ContagemPorDia,
     ConversasDoFluxo,
+    CpuELatencia,
     Credencial,
     Desfecho,
     DesfechoDoFluxo,
@@ -67,8 +68,8 @@ from painel.periodo import Escolha, Periodo
 
 # Na fonte real, cada leitura é uma consulta de alguns segundos: em fila, uma
 # tela fria levaria um minuto. As leituras de uma tela vão juntas, até 8 por vez,
-# abaixo do limite de consultas simultâneas do Logs Insights da conta (30, que o
-# Grafana também usa).
+# abaixo do limite de consultas simultâneas do Logs Insights da conta (30, divididas
+# entre todo mundo que roda o painel).
 _LEITURAS = ThreadPoolExecutor(max_workers=8, thread_name_prefix="leitura")
 
 
@@ -203,10 +204,23 @@ class LeiturasDoSistema:
     credencial: Leitura[Credencial] | None = None
     resumo: Leitura[ResumoDoDia] | None = None
     gasto: Leitura[GastoDeIA] | None = None
+    # A CPU e a latência p99 dos dois ambientes, hora a hora (o que o Grafana mostrava).
+    cpu_e_latencia: Leitura[list[CpuELatencia]] | None = None
 
     def todas(self) -> list[Leitura[Any]]:
         leituras: list[Leitura[Any]] = [self.tempo, self.duracao_do_verde, self.resultado_do_verde, self.erros, self.tokens, self.rotinas]
-        extras = (self.saude, self.recursos, self.pedidos, self.modelo, self.erros_da_ia, self.envios, self.credencial, self.resumo, self.gasto)
+        extras = (
+            self.saude,
+            self.recursos,
+            self.pedidos,
+            self.modelo,
+            self.erros_da_ia,
+            self.envios,
+            self.credencial,
+            self.resumo,
+            self.gasto,
+            self.cpu_e_latencia,
+        )
         return leituras + [x for x in extras if x is not None]
 
 
@@ -222,6 +236,8 @@ def ler_sistema(ambiente: Ambiente, dia: date | None = None) -> LeiturasDoSistem
     erros_da_ia, envios = ler_ja(partial(fonte.erros_da_ia, ambiente, dia or no_dia)), ler_ja(partial(fonte.envios_do_whatsapp, ambiente, dia or no_dia))
     credencial, resumo = ler_ja(partial(fonte.credencial, ambiente)), ler_ja(partial(fonte.resumo_do_dia, ambiente, dia))
     gasto_do_dia = ler_ja(partial(fonte.gasto_do_dia, no_dia))
+    # Com a hora escolhida, o gráfico mostra o dia inteiro, com a hora em destaque.
+    cpu_e_latencia = ler_ja(partial(fonte.cpu_e_latencia, no_dia if dia is not None else None))
     return LeiturasDoSistema(
         agora=datetime.now(FUSO),
         dia=dia,
@@ -241,6 +257,7 @@ def ler_sistema(ambiente: Ambiente, dia: date | None = None) -> LeiturasDoSistem
         credencial=credencial.result(),
         resumo=resumo.result(),
         gasto=gasto_do_dia.result(),
+        cpu_e_latencia=cpu_e_latencia.result(),
     )
 
 

@@ -53,6 +53,7 @@ from painel.dados.modelo import (
     ContagemPorDia,
     ContagemPorHora,
     ConversasDoFluxo,
+    CpuELatencia,
     Credencial,
     Desfecho,
     DesfechoDoFluxo,
@@ -1104,6 +1105,24 @@ class FonteReal:
             return RecursosDoServico(cpu[0], cpu[1], memoria[0], memoria[1])
 
         return self._ler(fontes.fonte_recursos_do_servico(ambiente), gerar)
+
+    def cpu_e_latencia(self, dia: date | None = None) -> Leitura[list[CpuELatencia]]:
+        """Os dois gráficos do Grafana (observabilidade.json): CPU do ECS e p99 do balanceador."""
+
+        def gerar(agora: datetime) -> list[CpuELatencia] | None:
+            if dia is None:
+                inicio, fim = agora.replace(minute=0, second=0, microsecond=0) - timedelta(hours=23), agora
+            else:
+                inicio, fim = no_dia(o_dia(dia), agora)
+            horas = [h for h in (inicio + timedelta(hours=n) for n in range(24)) if h < fim]
+            linhas = []
+            for ambiente in Ambiente:
+                cpu = dict(self._serie("AWS/ECS", "CPUUtilization", self._servico(ambiente), "Average", 3600, inicio, fim))
+                p99 = dict(self._serie("AWS/ApplicationELB", "TargetResponseTime", self._dimensoes_do_balanceador(ambiente), "p99", 3600, inicio, fim))
+                linhas += [CpuELatencia(h, ambiente, cpu.get(h), p99.get(h)) for h in horas]
+            return linhas if any(x.cpu is not None or x.p99 is not None for x in linhas) else None
+
+        return self._ler(fontes.fonte_cpu_e_latencia(dia), gerar)
 
     def horarios_da_conferencia(self) -> Leitura[list[HorarioDaConferencia]]:
         def gerar(agora: datetime) -> list[HorarioDaConferencia]:

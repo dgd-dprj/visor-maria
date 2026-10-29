@@ -105,6 +105,7 @@ CONSULTAS: dict[str, Consulta] = {
     "origem_nao_atendida": Consulta("o trecho da origem, como em resumo_do_periodo" + COM_DIA, CINCO_MINUTOS, _dia_escolhido),
     "requisicoes_por_hora": Consulta("as últimas 24 horas, hora a hora" + COM_DIA, CINCO_MINUTOS, _dia_escolhido),
     "recursos_do_servico": Consulta("os últimos 10 minutos e o máximo das últimas 24 horas", UM_MINUTO),
+    "cpu_e_latencia": Consulta("as últimas 24 horas, hora a hora, dos dois ambientes" + COM_DIA, CINCO_MINUTOS, _dia_escolhido),
     "horarios_da_conferencia": Consulta("as conferências diárias dos últimos 30 dias", CINCO_MINUTOS),
     "verde_do_mes": Consulta("os 30 dias até hoje, de 0h do primeiro até agora", CINCO_MINUTOS),
     # Observatório da IA

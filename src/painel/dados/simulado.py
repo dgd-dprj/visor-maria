@@ -35,6 +35,7 @@ from painel.dados.modelo import (
     ContagemPorDia,
     ContagemPorHora,
     ConversasDoFluxo,
+    CpuELatencia,
     Credencial,
     Desfecho,
     DesfechoDoFluxo,
@@ -556,6 +557,27 @@ class FonteSimulada:
 
     def recursos_do_servico(self, ambiente: Ambiente) -> Leitura[RecursosDoServico]:
         return self._ler(fontes.fonte_recursos_do_servico(ambiente), lambda _: RecursosDoServico(0.08, 0.41, 0.52, 0.61))
+
+    def cpu_e_latencia(self, dia: date | None = None) -> Leitura[list[CpuELatencia]]:
+        # Como em produção: CPU abaixo de 1%, e o p99 quase sempre baixo, com uma hora ruim
+        # (consulta lenta ao Verde) que passa do limite do alerta.
+        dia = _o_dia(dia) if dia is not None else None
+
+        def gerar(momento: datetime) -> list[CpuELatencia]:
+            if dia is None:
+                inicio = momento.replace(minute=0, second=0, microsecond=0) - timedelta(hours=23)
+            else:
+                inicio = datetime.combine(dia, datetime.min.time(), tzinfo=FUSO)
+            horas = [h for h in (inicio + timedelta(hours=n) for n in range(24)) if h <= momento]
+            linhas = []
+            for ambiente in Ambiente:
+                for h in horas:
+                    sorteio = self._sorteio("cpu", ambiente, h)
+                    p99 = 9.9 if ambiente is Ambiente.PRODUCAO and h.hour == 14 else sorteio.uniform(0.2, 1.6)
+                    linhas.append(CpuELatencia(h, ambiente, round(sorteio.uniform(0.3, 0.9), 2), round(p99, 3)))
+            return linhas
+
+        return self._ler(fontes.fonte_cpu_e_latencia(dia), gerar)
 
     def horarios_da_conferencia(self) -> Leitura[list[HorarioDaConferencia]]:
         def gerar(momento: datetime) -> list[HorarioDaConferencia]:
