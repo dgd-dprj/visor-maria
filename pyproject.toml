@@ -1,0 +1,61 @@
+[project]
+name = "visor-maria"
+version = "0.1.0"
+description = "Visor Maria: o estado da Maria em telas de uma pergunta só (Dash + Plotly)."
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "dash>=4,<5",
+    "plotly>=7,<8",
+    "gunicorn>=23",
+    # America/Sao_Paulo no Windows e em imagens slim, que não trazem a base de fusos.
+    "tzdata",
+    "boto3[crt]>=1.43.118",
+]
+
+[dependency-groups]
+dev = [
+    "mypy>=1.11",
+    "pytest>=8",
+    "ruff>=0.6",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/painel"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 160
+target-version = "py312"
+
+[tool.ruff.lint]
+# Nome sem uso, variável de uma letra ambígua e ordem dos imports.
+select = ["F", "E741", "I"]
+
+[tool.mypy]
+python_version = "3.12"
+files = ["src", "tests", "scripts"]
+mypy_path = ["src"]
+strict = true
+# O Dash, o Plotly e o boto3 não publicam tipos (os do boto3 vêm num pacote à parte, que o painel dispensa).
+[[tool.mypy.overrides]]
+module = ["dash", "dash.*", "plotly", "plotly.*", "boto3", "boto3.*", "botocore", "botocore.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# dash.register_page não tem tipo.
+module = "painel.pages.*"
+disallow_untyped_calls = false
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false
+disallow_untyped_calls = false
+warn_return_any = false
