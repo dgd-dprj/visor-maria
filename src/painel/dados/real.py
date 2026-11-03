@@ -1127,12 +1127,21 @@ class FonteReal:
                     continue
                 # O histórico é pedido por alarme: sem o nome, a AWS devolve o de todos os
                 # alarmes da conta, e os do ajuste automático do ECS mudam o dia todo.
-                historico = self._metricas.describe_alarm_history(
-                    AlarmName=descrito["AlarmName"], HistoryItemType="StateUpdate", StartDate=agora - timedelta(days=7), EndDate=agora, MaxRecords=100
-                )["AlarmHistoryItems"]
+                # Paginado: cada disparo são dois itens (ida e volta), e a p99 já passa de 30
+                # disparos por semana.
+                historico = [
+                    item
+                    for pagina in self._metricas.get_paginator("describe_alarm_history").paginate(
+                        AlarmName=descrito["AlarmName"], HistoryItemType="StateUpdate", StartDate=agora - timedelta(days=7), EndDate=agora
+                    )
+                    for item in pagina["AlarmHistoryItems"]
+                ]
                 disparos = sum(1 for item in historico if json.loads(item["HistoryData"])["newState"]["stateValue"] == EstadoDoAlarme.DISPARADO)
                 ambiente, tipo = chave
-                alarmes.append(Alarme(tipo, ambiente, EstadoDoAlarme(descrito["StateValue"]), descrito["StateUpdatedTimestamp"].astimezone(FUSO), disparos))
+                # StateTransitionedTimestamp é a última troca de estado; o StateUpdatedTimestamp
+                # também muda com falha de avaliação, sem o estado mudar.
+                desde = (descrito.get("StateTransitionedTimestamp") or descrito["StateUpdatedTimestamp"]).astimezone(FUSO)
+                alarmes.append(Alarme(tipo, ambiente, EstadoDoAlarme(descrito["StateValue"]), desde, disparos))
             return alarmes or None
 
         return self._ler(fontes.fonte_alarmes(), gerar)

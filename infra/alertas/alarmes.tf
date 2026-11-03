@@ -29,7 +29,7 @@ resource "aws_cloudwatch_metric_alarm" "erros_5xx" {
   for_each = local.ambientes
 
   alarm_name        = "visor-maria-${each.key}-erros-5xx"
-  alarm_description = "Maria (${each.value.nome}): mais de 10 erros de servidor (5xx) em 5 minutos, por 5 minutos."
+  alarm_description = "Maria (${each.value.nome}): mais de 10 erros de servidor (5xx) em 5 minutos, duas vezes seguidas."
   namespace         = "AWS/ApplicationELB"
   metric_name       = "HTTPCode_Target_5XX_Count"
   statistic         = "Sum"

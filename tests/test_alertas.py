@@ -41,29 +41,31 @@ def test_o_nome_do_alarme_diz_o_ambiente_e_o_tipo(nome: str, esperado: tuple[Amb
 
 
 class _Paginador:
-    def __init__(self, alarmes: list[dict[str, Any]]) -> None:
-        self._alarmes = alarmes
+    def __init__(self, metricas: "_MetricasFalsas", nome: str) -> None:
+        self._metricas = metricas
+        self._nome = nome
 
-    def paginate(self, **_: Any) -> list[dict[str, Any]]:
-        return [{"MetricAlarms": self._alarmes}]
+    def paginate(self, **parametros: Any) -> list[dict[str, Any]]:
+        if self._nome == "describe_alarms":
+            return [{"MetricAlarms": self._metricas.alarmes}]
+        nome = parametros["AlarmName"]
+        self._metricas.historicos_pedidos.append(nome)
+        itens = [{"HistoryData": json.dumps({"newState": {"stateValue": e}})} for e in self._metricas.historico.get(nome, [])]
+        # Duas páginas: um disparo na segunda página também precisa contar.
+        return [{"AlarmHistoryItems": itens[:2]}, {"AlarmHistoryItems": itens[2:]}]
 
 
 class _MetricasFalsas:
     """O que a AWS devolve: os alarmes com o prefixo e o histórico de cada um."""
 
     def __init__(self, alarmes: list[dict[str, Any]], historico: dict[str, list[str]]) -> None:
-        self._alarmes = alarmes
-        self._historico = historico
+        self.alarmes = alarmes
+        self.historico = historico
         self.historicos_pedidos: list[str] = []
 
     def get_paginator(self, nome: str) -> _Paginador:
-        assert nome == "describe_alarms"
-        return _Paginador(self._alarmes)
-
-    def describe_alarm_history(self, AlarmName: str, **_: Any) -> dict[str, Any]:  # noqa: N803  (nome da AWS)
-        self.historicos_pedidos.append(AlarmName)
-        estados = self._historico.get(AlarmName, [])
-        return {"AlarmHistoryItems": [{"HistoryData": json.dumps({"newState": {"stateValue": e}})} for e in estados]}
+        assert nome in ("describe_alarms", "describe_alarm_history")
+        return _Paginador(self, nome)
 
 
 @pytest.fixture
@@ -74,7 +76,7 @@ def fonte(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> FonteReal:
 
 
 def _descrito(nome: str, estado: str) -> dict[str, Any]:
-    return {"AlarmName": nome, "StateValue": estado, "StateUpdatedTimestamp": datetime(2026, 11, 3, 14, 35, tzinfo=FUSO)}
+    return {"AlarmName": nome, "StateValue": estado, "StateTransitionedTimestamp": datetime(2026, 11, 3, 14, 35, tzinfo=FUSO)}
 
 
 def test_a_fonte_real_conta_os_disparos_da_semana_e_ignora_alarme_de_fora(fonte: FonteReal) -> None:
