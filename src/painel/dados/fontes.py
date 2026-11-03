@@ -16,6 +16,7 @@ from typing import Protocol
 
 from painel.dados.modelo import (
     AMBIENTE_DA_ORIGEM,
+    Alarme,
     Ambiente,
     ContagemPorDia,
     ContagemPorHora,
@@ -305,6 +306,15 @@ def fonte_recursos_do_servico(ambiente: Ambiente) -> Fonte:
     )
 
 
+def fonte_alarmes() -> Fonte:
+    return Fonte(
+        curto="alarmes",
+        nome="Os alarmes que avisam a equipe (infra/alertas): o estado de agora e os disparos dos últimos 7 dias",
+        identificador="CloudWatch Alarms com o prefixo visor-maria-, DescribeAlarms e DescribeAlarmHistory",
+        atraso="cerca de 1 minuto",
+    )
+
+
 def fonte_cpu_e_latencia(dia: date | None = None) -> Fonte:
     return Fonte(
         curto="ECS e balanceador",
@@ -506,6 +516,8 @@ class FonteDeDados(Protocol):
     def requisicoes_por_hora(self, ambiente: Ambiente, dia: date | None = None) -> Leitura[list[RequisicoesPorHora]]: ...
 
     def recursos_do_servico(self, ambiente: Ambiente) -> Leitura[RecursosDoServico]: ...
+
+    def alarmes(self) -> Leitura[list[Alarme]]: ...
 
     def cpu_e_latencia(self, dia: date | None = None) -> Leitura[list[CpuELatencia]]: ...
 

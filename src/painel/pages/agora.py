@@ -58,15 +58,18 @@ from painel.dados.modelo import (
     FUSO,
     NOME_DO_AMBIENTE,
     RESULTADOS_DO_VERDE,
+    Alarme,
     Ambiente,
     ConversasDoFluxo,
     Credencial,
     DiaDoVerde,
     Estado,
+    EstadoDoAlarme,
     FimDaConversa,
     Leitura,
     SaidaDaTriagem,
     SaudeServico,
+    TipoDeAlarme,
     nome_do_desfecho,
     nome_do_fluxo,
 )
@@ -678,6 +681,65 @@ def caminho_do_atendimento(dados: LeiturasDaAgora) -> html.Section:
     return quadro("O caminho do atendimento: o que funciona e o que não", tabela, leituras, dados.agora, lateral=lateral)
 
 
+# ── Alertas ───────────────────────────────────────────────────────────────
+
+# O que cada alarme de infra/alertas vigia, e quando ele avisa a equipe.
+ALERTAS: dict[TipoDeAlarme, tuple[str, str]] = {
+    TipoDeAlarme.SEM_HOST_SAUDAVEL: ("A Maria saiu do ar", "nenhum container saudável por 2 minutos, ou o balanceador sem dado"),
+    TipoDeAlarme.ERROS_5XX: ("Erros de servidor", "mais de 10 em 5 minutos, duas vezes seguidas"),
+    TipoDeAlarme.CPU_ALTA: ("CPU alta", "acima de 80% por 5 minutos"),
+    TipoDeAlarme.LATENCIA_P99: ("Respostas lentas", "1 em cada 100 respostas acima de 3 s por 15 minutos"),
+    TipoDeAlarme.VERDE_RECUSOU: ("O Verde recusou a credencial", "3 recusas em 10 minutos; volta ao normal com 2 horas sem recusa"),
+}
+ESTADO_DO_ALERTA: dict[EstadoDoAlarme, tuple[str, Tom]] = {
+    EstadoDoAlarme.DISPARADO: ("Disparado", "ruim"),
+    EstadoDoAlarme.NORMAL: ("Normal", "bom"),
+    EstadoDoAlarme.SEM_DADO: ("Sem dado", "atencao"),
+}
+SEM_ALERTAS = "Os alertas ainda não existem na AWS. Estão prontos no Visor (infra/alertas), e quem cria é o Ícaro."
+COMO_AVISA = "O CloudWatch confere o tempo todo, mesmo com o Visor fechado, e avisa a equipe quando um alerta dispara e quando volta ao normal."
+
+
+def _celula_do_alerta(alarme: Alarme | None) -> Any:
+    if alarme is None:
+        # O do Verde fica só em produção, pelo custo (infra/alertas, README).
+        return html.P("não vigiado aqui", className="texto-vazio")
+    texto, tom = ESTADO_DO_ALERTA[alarme.estado]
+    return html.Div(
+        [
+            selo(texto, tom),
+            html.P(f"desde {data_e_hora_curta(alarme.desde)}", className="ponto-legenda"),
+            html.P(f"{contagem(alarme.disparos_na_semana, 'disparo', 'disparos')} em 7 dias", className="ponto-legenda"),
+        ]
+    )
+
+
+def alertas(dados: LeiturasDaAgora) -> html.Section:
+    """Os alarmes que avisam a equipe, dos dois ambientes: o estado de agora e os disparos da semana."""
+    leitura = dados.alarmes
+    leituras: list[Leitura[Any]] = [leitura] if leitura is not None else []
+    if leitura is None or leitura.estado is Estado.VAZIO or not leitura.valor:
+        corpo: Any = html.P(SEM_ALERTAS, className="texto-vazio") if leitura is None or leitura.estado is not Estado.INDISPONIVEL else texto_de_falha(leitura)
+        return quadro("Alertas", corpo, leituras, dados.agora, lateral="os dois ambientes")
+    por_chave = {(a.tipo, a.ambiente): a for a in leitura.valor}
+    linhas = [
+        html.Tr(
+            [
+                html.Th([html.P(titulo), html.P(regra, className="ponto-legenda")], scope="row"),
+                *(html.Td(_celula_do_alerta(por_chave.get((tipo, ambiente)))) for ambiente in Ambiente),
+            ]
+        )
+        for tipo, (titulo, regra) in ALERTAS.items()
+    ]
+    tabela = html.Table(
+        [html.Thead(html.Tr([html.Th("Alerta"), *(html.Th(NOME_DO_AMBIENTE[a]) for a in Ambiente)])), html.Tbody(linhas)],
+        className="tabela",
+    )
+    disparados = sum(1 for a in leitura.valor if a.estado is EstadoDoAlarme.DISPARADO)
+    lateral = "nenhum disparado agora" if not disparados else f"{contagem(disparados, 'disparado', 'disparados')} agora"
+    return quadro("Alertas", [tabela, html.P(COMO_AVISA, className="ponto-legenda")], leituras, dados.agora, lateral=lateral)
+
+
 # ── Os dois ambientes ─────────────────────────────────────────────────────
 
 
@@ -908,7 +970,7 @@ FILTRADO = (
     "Os atendimentos, o caminho do atendimento, os fluxos, como terminaram, o tempo de resposta, os erros, o que aconteceu e os gráficos de hora em hora "
     "mostram o que foi escolhido."
 )
-DE_AGORA = "A credencial, os incidentes, os dois ambientes, o que exige atenção e CPU e memória continuam sendo de agora."
+DE_AGORA = "A credencial, os incidentes, os alertas, os dois ambientes, o que exige atenção e CPU e memória continuam sendo de agora."
 filtro_de_dia.registrar("agora", FILTRADO, DE_AGORA)
 
 Sinais = tuple[html.Section, html.Section, html.Section, html.Section, html.Section]
@@ -988,6 +1050,8 @@ def _tela(escolha: Filtro, sinais: Sinais) -> html.Div:
             html.Div(indicadores(dados, escolha), id="agora-indicadores", className="grade-indicadores grade-quatro"),
             # De ponta a ponta: cada etapa do atendimento, se funciona ou não, e onde ver mais.
             html.Div(caminho_do_atendimento(dados), id="agora-caminho"),
+            # Os alarmes que avisam a equipe por mensagem, mesmo com o Visor fechado.
+            html.Div(alertas(dados), id="agora-alertas"),
             # O que pede atenção agora, ao lado do que já aconteceu no dia.
             html.Div([html.Div(exige_atencao(dados), id="agora-atencao"), html.Div(acontecimentos(dados), id="agora-acontecimentos")], className="grade-dupla"),
             # Dois quadros de altura parecida lado a lado, para não sobrar buraco.
@@ -1007,6 +1071,7 @@ def _tela(escolha: Filtro, sinais: Sinais) -> html.Div:
 @callback(
     Output("agora-indicadores", "children"),
     Output("agora-caminho", "children"),
+    Output("agora-alertas", "children"),
     Output("agora-atencao", "children"),
     Output("agora-acontecimentos", "children"),
     Output("agora-ambientes", "children"),
@@ -1022,6 +1087,7 @@ def atualizar(_: int, ambiente: str | None, guardado: Any) -> tuple[Any, ...]:
     return (
         indicadores(dados, escolha),
         caminho_do_atendimento(dados),
+        alertas(dados),
         exige_atencao(dados),
         acontecimentos(dados),
         dois_ambientes(dados),

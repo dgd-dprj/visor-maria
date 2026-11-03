@@ -22,6 +22,7 @@ from painel.dados.fontes import DIAS_DO_REGISTRO
 from painel.dados.modelo import (
     AMBIENTE_DA_ORIGEM,
     FUSO,
+    Alarme,
     Ambiente,
     Assunto,
     ContagemPorDia,
@@ -139,6 +140,8 @@ class LeiturasDaAgora:
     triagem: Leitura[list[RodadaDaTriagem]] | None = None
     erros_da_ia: Leitura[list[ErroDaIA]] | None = None
     envios: Leitura[list[EnvioDoWhatsapp]] | None = None
+    # Os alarmes que avisam a equipe (infra/alertas), dos dois ambientes.
+    alarmes: Leitura[list[Alarme]] | None = None
 
     def todas(self) -> list[Leitura[Any]]:
         leituras: list[Leitura[Any]] = [self.resumo, self.rotinas]
@@ -156,6 +159,7 @@ class LeiturasDaAgora:
             self.triagem,
             self.erros_da_ia,
             self.envios,
+            self.alarmes,
         )
         return leituras + [x for x in extras if x is not None]
 
@@ -467,6 +471,7 @@ def ler_agora(dia: date | None = None, ambiente: Ambiente = Ambiente.PRODUCAO) -
     incidentes, renovacoes = ler_ja(fonte.incidentes_de_credencial), ler_ja(fonte.renovacoes)
     triagem, erros_da_ia = ler_ja(partial(fonte.triagem, ambiente, no_dia)), ler_ja(partial(fonte.erros_da_ia, ambiente, no_dia))
     envios = ler_ja(partial(fonte.envios_do_whatsapp, ambiente, no_dia))
+    alarmes = ler_ja(fonte.alarmes)
     return LeiturasDaAgora(
         agora=agora,
         dia=dia,
@@ -489,6 +494,7 @@ def ler_agora(dia: date | None = None, ambiente: Ambiente = Ambiente.PRODUCAO) -
         triagem=triagem.result(),
         erros_da_ia=erros_da_ia.result(),
         envios=envios.result(),
+        alarmes=alarmes.result(),
     )
 
 

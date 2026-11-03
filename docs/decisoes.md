@@ -2,6 +2,56 @@
 
 Cada decisão com a data, quem decidiu, o motivo e o que ela custa.
 
+## 2026-11-03: o quadro Alertas na Agora
+
+**Decisão (Nicole).** A Agora mostra os alertas, logo abaixo do caminho do atendimento:
+uma linha por alerta (o que vigia e quando avisa), uma coluna por ambiente, com o estado
+de agora (normal, disparado, sem dado), desde quando e quantas vezes disparou em 7 dias.
+Fica fora do filtro de dia, como a credencial: é sempre de agora. Antes de o Ícaro
+aplicar `infra/alertas`, o quadro diz que os alertas ainda não existem e quem cria.
+
+**De onde sai.** `DescribeAlarms` com o prefixo `visor-maria-` e `DescribeAlarmHistory`
+de cada alarme (pedir o histórico sem o nome traria os alarmes de ajuste automático do
+ECS, que mudam o dia todo). Relido a cada minuto; as duas chamadas não são cobradas por
+métrica.
+
+**Teste de 03/11, sem criar nada, contra 14 dias de métricas e logs reais.** As regras
+aplicadas aos dados de 20/10 a 03/11:
+
+- sem host saudável, 5xx e CPU: nenhum disparo, nos dois ambientes;
+- latência p99 de produção: 62 disparos (13 horas em alarme), cerca de 4 por dia, cada
+  um com o aviso de ida e o de volta;
+- Verde recusado em produção: teria avisado às 13:20 de 22/10, minutos depois do começo
+  do incidente que ficou 23 horas sem ser visto, e também em 20/10, das 16:20 às 17:20.
+  De noite, com pouco tráfego, as recusas ficam abaixo de 3 a cada 10 minutos, e o alarme
+  abriria e fecharia 16 vezes no incidente. Por isso ele só volta ao normal depois de 2
+  horas sem recusa: cerca de 4 avisos no mesmo incidente.
+
+## 2026-11-03: os alertas da Maria ficam no Visor, avaliados pelo CloudWatch (issue #2)
+
+**Decisão (Nicole).** Os alertas da Maria ficam no Visor (registrado na #308 e na
+#208 da Maria). Quem avalia é o CloudWatch Alarms, e o aviso sai por e-mail pelo SNS.
+O código fica neste repositório, em `infra/alertas/`, com estado próprio
+(`visor-maria/alertas/terraform.tfstate`).
+
+**Por que o CloudWatch, e não o Visor.** O Visor só consulta com alguém olhando a tela
+(5 consultas a cada 5 minutos e 2 a cada 15). Um alerta precisa ser avaliado o tempo
+todo, inclusive com o Visor fora do ar.
+
+**O que entrou.** As 8 regras do Grafana (sem host saudável, 5xx, CPU e latência p99,
+em produção e no release), com os mesmos limites. Também entrou o alerta da credencial
+do Verde recusada (401 e 403 em `verde_chamada`), que motivou a #308 da Maria e não
+estava na lista da #2.
+
+**O que custa.** O alerta do Verde precisa de um filtro de métrica dentro do grupo de
+logs da Maria, a única exceção à regra 3 do isolamento (nada dentro de recurso da
+Maria). A exceção foi aceita pela Nicole no mesmo dia, com o menor custo: só em
+produção (o release não tem uso), uma métrica sem dimensões, e o filtro só grava
+quando há recusa. A latência p99 continua com o limite de 3 s, como no Grafana, mesmo
+disparando boa parte do dia. São 9 alarmes e 1 métrica própria: cerca de US$ 1,20 por
+mês. Aplicar pede permissão de escrita em CloudWatch,
+SNS e, para o Verde, logs, que a credencial do Visor não tem (com o Ícaro).
+
 ## 2026-10-29: CPU e latência p99 no Sistema (issue #3)
 
 **Decisão.** Os dois gráficos do painel "Maria — Observabilidade" do Grafana
