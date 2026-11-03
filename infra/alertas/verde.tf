@@ -33,15 +33,16 @@ resource "aws_cloudwatch_metric_alarm" "verde_recusou" {
   for_each = local.ambientes_do_verde
 
   alarm_name        = "visor-maria-${each.key}-verde-recusou"
-  alarm_description = "Maria (${each.value.nome}): o Verde recusou a credencial (401 ou 403) 3 vezes ou mais em 10 minutos. As consultas de RG e de processo falham, e a pessoa ouve que não foi encontrada. Volta ao normal depois de 2 horas sem recusa."
+  alarm_description = "Maria (${each.value.nome}): o Verde recusou a credencial (401 ou 403) em pelo menos uma consulta nos últimos 10 minutos (a Maria tenta cada consulta 3 vezes). As consultas de RG e de processo falham, e a pessoa ouve que não foi encontrada. Volta ao normal depois de 2 horas sem recusa."
   namespace         = "VisorMaria/${each.key}"
   metric_name       = "VerdeRecusou"
   statistic         = "Sum"
   period            = 600
   # Dispara com 1 janela de 10 min em violação e só volta ao normal com as 12 últimas
   # (2 horas) limpas. Testado contra os logs de 22 e 23/10: de noite, com pouco tráfego,
-  # as recusas caem abaixo de 3 por janela, e com 1 de 1 o alarme abriria e fecharia 16
-  # vezes no incidente; com 1 de 12, cerca de 4.
+  # as recusas caem abaixo de 3 linhas por janela, ou seja, nenhuma consulta inteira (a
+  # Maria tenta cada consulta 3 vezes), e com 1 de 1 o alarme abriria e fecharia 16 vezes
+  # no incidente; com 1 de 12, cerca de 4.
   evaluation_periods  = 12
   datapoints_to_alarm = 1
   comparison_operator = "GreaterThanOrEqualToThreshold"

@@ -10,7 +10,7 @@ pode ser ele a avisar.
 | `visor-maria-<ambiente>-erros-5xx` | `HTTPCode_Target_5XX_Count` (soma em 5 min) | maior que 10 em dois períodos seguidos | não dispara |
 | `visor-maria-<ambiente>-cpu-alta` | `AWS/ECS` `CPUUtilization` (média) | maior que 80% por 5 min | não dispara |
 | `visor-maria-<ambiente>-latencia-p99` | `TargetResponseTime` (p99) | maior que 3 s por 15 min | não dispara |
-| `visor-maria-producao-verde-recusou` | respostas 401 e 403 em `verde_chamada` | 3 ou mais em 10 min | não dispara |
+| `visor-maria-producao-verde-recusou` | respostas 401 e 403 em `verde_chamada` | 3 ou mais em 10 min, ou seja, uma consulta (a Maria tenta cada consulta 3 vezes) | não dispara |
 
 Os quatro primeiros existem em `producao` e `release` (8 alarmes, como no Grafana). O do
 Verde só em produção (`ambientes_do_verde`), pelo custo: o release não tem uso. São 9

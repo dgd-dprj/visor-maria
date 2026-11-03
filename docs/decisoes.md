@@ -23,7 +23,7 @@ aplicadas aos dados de 20/10 a 03/11:
   um com o aviso de ida e o de volta;
 - Verde recusado em produção: teria avisado às 13:20 de 22/10, minutos depois do começo
   do incidente que ficou 23 horas sem ser visto, e também em 20/10, das 16:20 às 17:20.
-  De noite, com pouco tráfego, as recusas ficam abaixo de 3 a cada 10 minutos, e o alarme
+  De noite, com pouco tráfego, as recusas ficam abaixo de 3 linhas a cada 10 minutos, ou seja, nenhuma consulta inteira, e o alarme
   abriria e fecharia 16 vezes no incidente. Por isso ele só volta ao normal depois de 2
   horas sem recusa: cerca de 4 avisos no mesmo incidente.
 

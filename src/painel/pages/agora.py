@@ -689,7 +689,10 @@ ALERTAS: dict[TipoDeAlarme, tuple[str, str]] = {
     TipoDeAlarme.ERROS_5XX: ("Erros de servidor", "mais de 10 em 5 minutos, duas vezes seguidas"),
     TipoDeAlarme.CPU_ALTA: ("CPU alta", "acima de 80% por 5 minutos"),
     TipoDeAlarme.LATENCIA_P99: ("Respostas lentas", "1 em cada 100 respostas acima de 3 s por 15 minutos"),
-    TipoDeAlarme.VERDE_RECUSOU: ("O Verde recusou a credencial", "3 recusas em 10 minutos; volta ao normal com 2 horas sem recusa"),
+    TipoDeAlarme.VERDE_RECUSOU: (
+        "O Verde recusou a credencial",
+        "uma consulta recusada em 10 minutos (a Maria tenta 3 vezes); volta ao normal com 2 horas sem recusa",
+    ),
 }
 ESTADO_DO_ALERTA: dict[EstadoDoAlarme, tuple[str, Tom]] = {
     EstadoDoAlarme.DISPARADO: ("Disparado", "ruim"),
