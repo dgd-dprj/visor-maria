@@ -1,0 +1,127 @@
+{
+  "origem": {
+    "repositorio": "dgd-dprj/maria-langgraph-pp",
+    "branch": "develop",
+    "commit": "7c2fb3cc81d604e68ee9a423edaa7e1fba55581e",
+    "extraido_em": "2026-10-28"
+  },
+  "eventos": {
+    "atendimento_criado": [
+      "chatId",
+      "fluxoId"
+    ],
+    "atendimento_expirado": [
+      "chatId",
+      "fluxoId"
+    ],
+    "atendimento_finalizado": [
+      "chatId",
+      "destino",
+      "fluxoId",
+      "motivoHandoff",
+      "status",
+      "tokensGastos"
+    ],
+    "atendimento_sem_checkpoint": [
+      "chatId",
+      "fluxoId"
+    ],
+    "orquestrador_finalizado_sem_fluxo": [
+      "chatId",
+      "destino",
+      "rodada",
+      "status",
+      "tipoCaso",
+      "tokensGastosTotal"
+    ],
+    "orquestrador_fluxo_identificado": [
+      "chatId",
+      "flowId",
+      "rodada",
+      "tokensGastosTotal"
+    ],
+    "orquestrador_inconsistencia": [
+      "chatId",
+      "destino",
+      "flowId",
+      "status"
+    ],
+    "orquestrador_pergunta_enviada": [
+      "chatId",
+      "rodada",
+      "status",
+      "tipoResposta",
+      "tokensGastosTotal"
+    ],
+    "orquestrador_redirecionado": [
+      "chatId",
+      "destino",
+      "rodada",
+      "status",
+      "tipoCaso",
+      "tokensGastosTotal"
+    ],
+    "pergunta_enviada": [
+      "chatId",
+      "fluxoId",
+      "status",
+      "tipoResposta",
+      "tokensGastosTotal",
+      "viaIA"
+    ],
+    "resposta_recebida": [
+      "chatId",
+      "fluxoId"
+    ],
+    "ttl_confirmacao_repetida": [
+      "chatId",
+      "fluxoId"
+    ],
+    "ttl_confirmacao_solicitada": [
+      "chatId",
+      "fluxoId",
+      "horasInativo"
+    ],
+    "verde_chamada": [
+      "chamada",
+      "duracaoMs",
+      "err",
+      "resultado",
+      "status",
+      "tentativa",
+      "tipoErro"
+    ],
+    "whatsapp_bridge_erro": [
+      "chatId",
+      "status"
+    ],
+    "whatsapp_envio_erro": [
+      "chatId",
+      "duracaoMs",
+      "erro"
+    ],
+    "whatsapp_envio_falhou": [
+      "chatId",
+      "duracaoMs",
+      "status"
+    ],
+    "whatsapp_envio_mock": [
+      "chatId"
+    ],
+    "whatsapp_envio_ok": [
+      "chatId",
+      "duracaoMs"
+    ],
+    "whatsapp_status_entrega": [
+      "erroCodigo",
+      "erroTitulo",
+      "status"
+    ]
+  },
+  "linhas_do_workflow": [
+    "status atual:",
+    "expiraEm=",
+    "token renovado, gravado no Secrets Manager",
+    "container novo no ar"
+  ]
+}
