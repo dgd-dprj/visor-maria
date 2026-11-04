@@ -428,6 +428,49 @@ class RecursosDoServico:
     memoria_maxima: float
 
 
+class EstadoDoAlarme(StrEnum):
+    """O estado de um alarme do CloudWatch, com o valor que a AWS usa."""
+
+    NORMAL = "OK"
+    DISPARADO = "ALARM"
+    SEM_DADO = "INSUFFICIENT_DATA"
+
+
+class TipoDeAlarme(StrEnum):
+    """Os alarmes de infra/alertas. O nome na AWS é visor-maria-<ambiente>-<tipo>."""
+
+    SEM_HOST_SAUDAVEL = "sem-host-saudavel"
+    ERROS_5XX = "erros-5xx"
+    CPU_ALTA = "cpu-alta"
+    LATENCIA_P99 = "latencia-p99"
+    VERDE_RECUSOU = "verde-recusou"
+
+
+PREFIXO_DOS_ALARMES = "visor-maria-"
+
+
+@dataclass(frozen=True)
+class Alarme:
+    """Um alarme de infra/alertas: o estado de agora e quantas vezes disparou em 7 dias."""
+
+    tipo: TipoDeAlarme
+    ambiente: Ambiente
+    estado: EstadoDoAlarme
+    desde: datetime
+    disparos_na_semana: int
+
+
+def alarme_do_nome(nome: str) -> tuple[Ambiente, TipoDeAlarme] | None:
+    """visor-maria-producao-cpu-alta vira (produção, cpu-alta). Nome de fora de infra/alertas: None."""
+    if not nome.startswith(PREFIXO_DOS_ALARMES):
+        return None
+    ambiente, _, tipo = nome.removeprefix(PREFIXO_DOS_ALARMES).partition("-")
+    try:
+        return Ambiente(ambiente), TipoDeAlarme(tipo)
+    except ValueError:
+        return None
+
+
 @dataclass(frozen=True)
 class CpuELatencia:
     """Uma hora de um ambiente: a CPU média do serviço ECS (%) e a latência p99 do

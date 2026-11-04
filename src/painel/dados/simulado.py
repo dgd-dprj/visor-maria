@@ -30,6 +30,7 @@ from painel.dados import fontes
 from painel.dados.modelo import (
     AMBIENTE_DA_ORIGEM,
     FUSO,
+    Alarme,
     Ambiente,
     Assunto,
     ContagemPorDia,
@@ -48,6 +49,7 @@ from painel.dados.modelo import (
     EnvioDoWhatsapp,
     ErroDaIA,
     Estado,
+    EstadoDoAlarme,
     FimDaConversa,
     FluxoNoDia,
     Fonte,
@@ -74,6 +76,7 @@ from painel.dados.modelo import (
     SaudeServico,
     SistemaNoDia,
     TempoDeResposta,
+    TipoDeAlarme,
     TokensDoDia,
     TokensRegistrados,
     TrechoDeNaoEncontrado,
@@ -557,6 +560,24 @@ class FonteSimulada:
 
     def recursos_do_servico(self, ambiente: Ambiente) -> Leitura[RecursosDoServico]:
         return self._ler(fontes.fonte_recursos_do_servico(ambiente), lambda _: RecursosDoServico(0.08, 0.41, 0.52, 0.61))
+
+    def alarmes(self) -> Leitura[list[Alarme]]:
+        """Como no teste de 03/11 contra as métricas de 14 dias: só a latência p99 de produção
+        dispara (62 vezes em 14 dias); o Verde fica só em produção, pelo custo."""
+
+        def gerar(momento: datetime) -> list[Alarme]:
+            agora = momento.replace(second=0, microsecond=0)
+            alarmes = []
+            for ambiente in Ambiente:
+                for tipo in TipoDeAlarme:
+                    if tipo is TipoDeAlarme.VERDE_RECUSOU and ambiente is not Ambiente.PRODUCAO:
+                        continue
+                    lento = tipo is TipoDeAlarme.LATENCIA_P99 and ambiente is Ambiente.PRODUCAO
+                    estado = EstadoDoAlarme.DISPARADO if lento else EstadoDoAlarme.NORMAL
+                    alarmes.append(Alarme(tipo, ambiente, estado, agora - timedelta(minutes=25 if lento else 26 * 60), 31 if lento else 0))
+            return alarmes
+
+        return self._ler(fontes.fonte_alarmes(), gerar)
 
     def cpu_e_latencia(self, dia: date | None = None) -> Leitura[list[CpuELatencia]]:
         # Como em produção: CPU abaixo de 1%, e o p99 quase sempre baixo, com uma hora ruim

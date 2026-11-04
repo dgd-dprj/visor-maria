@@ -15,6 +15,7 @@ Os dias são os de Brasília (UTC menos 3 horas, sem horário de verão desde 20
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
@@ -48,6 +49,8 @@ from painel.dados.cache import CacheEmDisco
 from painel.dados.modelo import (
     AMBIENTE_DA_ORIGEM,
     FUSO,
+    PREFIXO_DOS_ALARMES,
+    Alarme,
     Ambiente,
     Assunto,
     ContagemPorDia,
@@ -65,6 +68,7 @@ from painel.dados.modelo import (
     EnvioDoWhatsapp,
     ErroDaIA,
     Estado,
+    EstadoDoAlarme,
     FimDaConversa,
     FluxoNoDia,
     Fonte,
@@ -95,6 +99,7 @@ from painel.dados.modelo import (
     TokensRegistrados,
     TrechoDeNaoEncontrado,
     UsoDaIA,
+    alarme_do_nome,
     destino_do_log,
 )
 
@@ -1105,6 +1110,41 @@ class FonteReal:
             return RecursosDoServico(cpu[0], cpu[1], memoria[0], memoria[1])
 
         return self._ler(fontes.fonte_recursos_do_servico(ambiente), gerar)
+
+    def alarmes(self) -> Leitura[list[Alarme]]:
+        """Os alarmes de infra/alertas. Vazio enquanto o Terraform deles não for aplicado."""
+
+        def gerar(agora: datetime) -> list[Alarme] | None:
+            descritos = [
+                a
+                for pagina in self._metricas.get_paginator("describe_alarms").paginate(AlarmNamePrefix=PREFIXO_DOS_ALARMES, AlarmTypes=["MetricAlarm"])
+                for a in pagina["MetricAlarms"]
+            ]
+            alarmes = []
+            for descrito in descritos:
+                chave = alarme_do_nome(descrito["AlarmName"])
+                if chave is None:
+                    continue
+                # O histórico é pedido por alarme: sem o nome, a AWS devolve o de todos os
+                # alarmes da conta, e os do ajuste automático do ECS mudam o dia todo.
+                # Paginado: cada disparo são dois itens (ida e volta), e a p99 já passa de 30
+                # disparos por semana.
+                historico = [
+                    item
+                    for pagina in self._metricas.get_paginator("describe_alarm_history").paginate(
+                        AlarmName=descrito["AlarmName"], HistoryItemType="StateUpdate", StartDate=agora - timedelta(days=7), EndDate=agora
+                    )
+                    for item in pagina["AlarmHistoryItems"]
+                ]
+                disparos = sum(1 for item in historico if json.loads(item["HistoryData"])["newState"]["stateValue"] == EstadoDoAlarme.DISPARADO)
+                ambiente, tipo = chave
+                # StateTransitionedTimestamp é a última troca de estado; o StateUpdatedTimestamp
+                # também muda com falha de avaliação, sem o estado mudar.
+                desde = (descrito.get("StateTransitionedTimestamp") or descrito["StateUpdatedTimestamp"]).astimezone(FUSO)
+                alarmes.append(Alarme(tipo, ambiente, EstadoDoAlarme(descrito["StateValue"]), desde, disparos))
+            return alarmes or None
+
+        return self._ler(fontes.fonte_alarmes(), gerar)
 
     def cpu_e_latencia(self, dia: date | None = None) -> Leitura[list[CpuELatencia]]:
         """Os dois gráficos do Grafana (observabilidade.json): CPU do ECS e p99 do balanceador."""

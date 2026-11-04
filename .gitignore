@@ -11,3 +11,10 @@ dist/
 # Export do rascunho (1,5 MB, quase tudo fonte em base64): fica fora do git,
 # por decisão de 26/10 (docs/decisoes.md).
 Painel da Maria.html
+
+# Terraform: pasta de trabalho, estado e valores locais (os e-mails ficam fora do git)
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+
