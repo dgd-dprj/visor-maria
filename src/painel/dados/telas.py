@@ -8,8 +8,9 @@ em `sys.modules`, o que quebra dataclasses declaradas lá.
 
 from __future__ import annotations
 
+import logging
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta
@@ -18,6 +19,7 @@ from typing import Any
 
 from painel import gasto
 from painel.dados import obter_fonte
+from painel.dados.cache import VENCIDA_AINDA_SERVE
 from painel.dados.fontes import DIAS_DO_REGISTRO
 from painel.dados.modelo import (
     AMBIENTE_DA_ORIGEM,
@@ -41,9 +43,11 @@ from painel.dados.modelo import (
     FluxoNoDia,
     GastoDeIA,
     GastoDoAssunto,
+    HoraDaInfra,
     IncidenteDeCredencial,
     Leitura,
     MudancaNaIA,
+    OcorrenciasDoPeriodo,
     Origem,
     ProblemaNoDia,
     RecursosDoServico,
@@ -66,6 +70,8 @@ from painel.dados.modelo import (
     juntar,
 )
 from painel.periodo import Escolha, Periodo
+
+registro = logging.getLogger(__name__)
 
 # Na fonte real, cada leitura é uma consulta de alguns segundos: em fila, uma
 # tela fria levaria um minuto. As leituras de uma tela vão juntas, até 8 por vez,
@@ -106,6 +112,37 @@ def preparar(consulta: str, *argumentos: Any) -> None:
             return
         _preparados.add(chave)
     _PREPARO.submit(getattr(fonte, consulta), *argumentos)
+
+
+# Quem abre uma tela vai abrir as outras. Fria, cada tela espera as suas
+# consultas, de 2 a 6 segundos; por isso as que não estão abertas são montadas
+# por trás, uma de cada vez, e o primeiro clique encontra as leituras prontas. De
+# novo só depois de `VENCIDA_AINDA_SERVE`: antes disso, a leitura guardada ainda
+# aparece na hora, e montar de novo só pagaria consultas.
+_AQUECIMENTO = ThreadPoolExecutor(max_workers=1, thread_name_prefix="aquecimento")
+_aquecido_em: datetime | None = None
+_trava_do_aquecimento = threading.Lock()
+
+
+def aquecer(montagens: Iterable[Callable[[], object]], agora: datetime | None = None) -> bool:
+    """Monta por trás as telas que não estão abertas; False quando a última vez foi há pouco."""
+    global _aquecido_em
+    agora = agora or datetime.now(FUSO)
+    with _trava_do_aquecimento:
+        if _aquecido_em is not None and agora - _aquecido_em < VENCIDA_AINDA_SERVE:
+            return False
+        _aquecido_em = agora
+    for montar in montagens:
+        _AQUECIMENTO.submit(_montar_por_tras, montar)
+    return True
+
+
+def _montar_por_tras(montar: Callable[[], object]) -> None:
+    try:
+        montar()
+    except Exception:
+        # Uma tela que não monta não impede as outras; quem abri-la vê o erro.
+        registro.exception("montagem por trás falhou")
 
 
 def dias_passados(quantos: int, agora: datetime) -> list[date]:
@@ -277,9 +314,12 @@ class LeiturasDoAtendimento:
     por_dia: Leitura[list[ContagemPorDia]]
     # Como terminaram, para o filtro por motivo.
     desfechos: Leitura[list[Desfecho]]
+    # Problemas e defeitos: uma linha por ocorrência.
+    ocorrencias: Leitura[OcorrenciasDoPeriodo] | None = None
 
     def todas(self) -> list[Leitura[Any]]:
-        return [self.por_dia, self.resumo, self.nao_encontrado, self.orquestrador, self.desfechos]
+        leituras: list[Leitura[Any]] = [self.por_dia, self.resumo, self.nao_encontrado, self.orquestrador, self.desfechos]
+        return [*leituras, self.ocorrencias] if self.ocorrencias is not None else leituras
 
 
 def ler_atendimento(origem: Origem, dia: date | None = None) -> LeiturasDoAtendimento:
@@ -288,6 +328,7 @@ def ler_atendimento(origem: Origem, dia: date | None = None) -> LeiturasDoAtendi
     orquestrador = ler_ja(partial(fonte.orquestrador, origem, dia))
     por_dia = ler_ja(partial(fonte.atendimentos_por_dia, AMBIENTE_DA_ORIGEM[origem]))
     desfechos = ler_ja(partial(fonte.desfechos, origem, dia))
+    # Os problemas não entram aqui: o quadro deles tem leitura e relógio próprios, e a tela não espera por eles.
     return LeiturasDoAtendimento(
         agora=datetime.now(FUSO),
         origem=origem,
@@ -297,6 +338,45 @@ def ler_atendimento(origem: Origem, dia: date | None = None) -> LeiturasDoAtendi
         orquestrador=orquestrador.result(),
         por_dia=por_dia.result(),
         desfechos=desfechos.result(),
+    )
+
+
+def ler_ocorrencias(origem: Origem, dia: date | None = None) -> Leitura[OcorrenciasDoPeriodo]:
+    """O quadro de problemas se refaz sozinho (os filtros dele ficam fora da área que o relógio refaz)."""
+    return obter_fonte().ocorrencias(origem, dia)
+
+
+@dataclass(frozen=True)
+class LeiturasDaInfra:
+    """A tela Infra: o ambiente do filtro hora a hora (24 horas, ou o dia escolhido) e
+    em 14 dias; e a última hora dos dois ambientes, com os containers de agora."""
+
+    agora: datetime
+    ambiente: Ambiente
+    dia: date | None
+    horas: Leitura[list[HoraDaInfra]]
+    dias: Leitura[list[HoraDaInfra]]
+    dos_dois: dict[Ambiente, Leitura[list[HoraDaInfra]]]
+    saude: dict[Ambiente, Leitura[SaudeServico]]
+
+    def todas(self) -> list[Leitura[Any]]:
+        return [self.horas, self.dias, *self.dos_dois.values(), *self.saude.values()]
+
+
+def ler_infra(ambiente: Ambiente, dia: date | None = None) -> LeiturasDaInfra:
+    fonte = obter_fonte()
+    horas, dias = ler_ja(partial(fonte.infra_por_hora, ambiente, dia)), ler_ja(partial(fonte.infra_por_dia, ambiente))
+    # "Agora" é das últimas 24 horas, nos dois ambientes, com ou sem dia escolhido.
+    dos_dois = {a: ler_ja(partial(fonte.infra_por_hora, a)) for a in Ambiente}
+    saude = {a: ler_ja(partial(fonte.saude_servico, a)) for a in Ambiente}
+    return LeiturasDaInfra(
+        agora=datetime.now(FUSO),
+        ambiente=ambiente,
+        dia=dia,
+        horas=horas.result(),
+        dias=dias.result(),
+        dos_dois={a: f.result() for a, f in dos_dois.items()},
+        saude={a: f.result() for a, f in saude.items()},
     )
 
 

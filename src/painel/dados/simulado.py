@@ -55,10 +55,13 @@ from painel.dados.modelo import (
     Fonte,
     GastoDeIA,
     GastoDoAssunto,
+    HoraDaInfra,
     HorarioDaConferencia,
     IncidenteDeCredencial,
     Leitura,
     MudancaNaIA,
+    Ocorrencia,
+    OcorrenciasDoPeriodo,
     Origem,
     OrigemNaoAtendida,
     ProblemaNoDia,
@@ -81,6 +84,7 @@ from painel.dados.modelo import (
     TokensRegistrados,
     TrechoDeNaoEncontrado,
     UsoDaIA,
+    ValidadeConferida,
 )
 
 MOTIVO_DA_FALHA_SIMULADA = "A fonte não respondeu a esta leitura (falha simulada)."
@@ -118,6 +122,38 @@ INCIDENTES = [
     IncidenteDeCredencial(Ambiente.PRODUCAO, _h(20, 10, 16, 29), _h(20, 10, 17, 23), 33, None),
     IncidenteDeCredencial(Ambiente.PRODUCAO, _h(22, 10, 13, 27), _h(23, 10, 12, 34), 283, 75),
 ]
+
+# A partir de que dia cada validade aparece na conferência diária, como a real
+# leu (levantamento de 09/11). A conferência lê o segredo antes de renovar: a
+# validade nova só aparece no dia seguinte.
+VALIDADES_CONFERIDAS = {
+    Ambiente.PRODUCAO: (
+        (date(2026, 9, 29), _h(28, 10, 16, 6)),
+        (date(2026, 10, 1), _h(1, 11, 9, 28)),
+        (date(2026, 10, 21), _h(29, 10, 10, 2)),
+        (date(2026, 10, 23), _h(1, 11, 9, 28)),
+    ),
+    Ambiente.RELEASE: ((date(2026, 10, 23), _h(23, 11, 10, 34)),),
+}
+
+
+def _dias_do_mes(mes: date, momento: datetime) -> list[date]:
+    """Os dias do mês, do dia 1 até o último, ou até hoje no mês corrente."""
+    ultimo = min(fontes.ultimo_dia_do_mes(mes), momento.date())
+    primeiro = mes.replace(day=1)
+    return [primeiro + timedelta(days=n) for n in range((ultimo - primeiro).days + 1)]
+
+
+def _conferidas(ambiente: Ambiente) -> tuple[ValidadeConferida, ...]:
+    trechos = VALIDADES_CONFERIDAS[ambiente]
+    primeiro, ultimo = trechos[0][0], CONFERENCIA_DE_ONTEM.date()
+    conferidas = []
+    for n in range((ultimo - primeiro).days + 1):
+        dia = primeiro + timedelta(days=n)
+        valida_ate = next(validade for desde, validade in reversed(trechos) if desde <= dia)
+        conferidas.append(ValidadeConferida(CONFERENCIA_DE_ONTEM.replace(day=dia.day, month=dia.month), valida_ate))
+    return tuple(conferidas)
+
 
 RENOVACOES = [
     Renovacao(Ambiente.PRODUCAO, _h(22, 10, 13, 27), container_novo_no_ar=False),
@@ -201,7 +237,7 @@ class FonteSimulada:
             emitida, validade = CREDENCIAIS[ambiente]
             minutos = 10 if ambiente is Ambiente.PRODUCAO else 140
             ultima_aceita = (momento - timedelta(minutes=minutos)).replace(second=0, microsecond=0)
-            return Credencial(emitida, validade, ultima_aceita, CONFERENCIA_DE_ONTEM, True)
+            return Credencial(emitida, validade, ultima_aceita, CONFERENCIA_DE_ONTEM, True, _conferidas(ambiente))
 
         return self._ler(fontes.fonte_credencial(ambiente), gerar)
 
@@ -600,9 +636,10 @@ class FonteSimulada:
 
         return self._ler(fontes.fonte_cpu_e_latencia(dia), gerar)
 
-    def horarios_da_conferencia(self) -> Leitura[list[HorarioDaConferencia]]:
+    def horarios_da_conferencia(self, mes: date | None = None) -> Leitura[list[HorarioDaConferencia]]:
         def gerar(momento: datetime) -> list[HorarioDaConferencia]:
-            dias = [momento.date() - timedelta(days=n) for n in range(29, -1, -1)]
+            dias = _dias_do_mes(mes, momento) if mes is not None else [momento.date() - timedelta(days=n) for n in range(29, -1, -1)]
+            dias = [d for d in dias if d >= INICIO_DAS_ROTINAS]
             return [
                 HorarioDaConferencia(
                     d,
@@ -612,11 +649,17 @@ class FonteSimulada:
                 for d in dias
             ]
 
-        return self._ler(fontes.fonte_horarios_da_conferencia(), gerar)
+        return self._ler(fontes.fonte_horarios_da_conferencia(mes), gerar)
 
-    def verde_do_mes(self, ambiente: Ambiente) -> Leitura[list[DiaDoVerde]]:
-        def gerar(momento: datetime) -> list[DiaDoVerde]:
-            dias = [momento.date() - timedelta(days=n) for n in range(29, -1, -1)]
+    def verde_do_mes(self, ambiente: Ambiente, mes: date | None = None) -> Leitura[list[DiaDoVerde]]:
+        def gerar(momento: datetime) -> list[DiaDoVerde] | None:
+            if mes is None:
+                dias = [momento.date() - timedelta(days=n) for n in range(29, -1, -1)]
+            else:
+                # Como na real: os logs guardam 30 dias.
+                dias = [d for d in _dias_do_mes(mes, momento) if d >= fontes.primeiro_dia_nos_logs(momento)]
+                if not dias:
+                    return None
             resultado = []
             for dia in dias:
                 total = (
@@ -630,7 +673,7 @@ class FonteSimulada:
                 resultado.append(DiaDoVerde(dia, max(total - recusadas - outras, 0), recusadas, outras, nao_achou, sem_resposta))
             return resultado
 
-        return self._ler(fontes.fonte_verde_do_mes(ambiente), gerar)
+        return self._ler(fontes.fonte_verde_do_mes(ambiente, mes), gerar)
 
     # ── Observatório da IA ────────────────────────────────────────────────
 
@@ -869,6 +912,148 @@ class FonteSimulada:
             return [e for e in envios if e.vezes] or None
 
         return self._ler(fontes.fonte_envios_do_whatsapp(ambiente, dia), gerar)
+
+    # ── Atendimento: problemas e defeitos ─────────────────────────────────
+
+    def ocorrencias(self, origem: Origem, dia: date | None = None) -> Leitura[OcorrenciasDoPeriodo]:
+        """Na ordem de grandeza do levantamento de 10/11 em produção (23/10 a 10/11):
+        306 ocorrências em 91 conversas, quase todas o Verde sem resposta (3 tentativas de
+        30 s) e a resposta que passou dos 30 s por causa dele; picos às 9h e às 16h."""
+
+        def gerar(momento: datetime) -> OcorrenciasDoPeriodo | None:
+            if origem is Origem.PRODUCAO_TS:
+                inicio, fim = _h(16, 10, 0, 0), CORTE_DE_VERSAO
+            elif origem is Origem.PRODUCAO_PY:
+                inicio, fim = CORTE_DE_VERSAO, momento
+            else:
+                inicio, fim = momento - timedelta(days=7), momento
+            if dia is not None:
+                comeco = datetime.combine(_o_dia(dia), datetime.min.time(), tzinfo=FUSO) if not isinstance(dia, datetime) else dia
+                final = comeco + (timedelta(hours=1) if isinstance(dia, datetime) else timedelta(days=1))
+                inicio, fim = max(inicio, comeco), min(fim, final, momento)
+            if fim <= inicio:
+                return None
+            lista: list[Ocorrencia] = []
+            conversas = 0
+            d = inicio.date()
+            while d <= fim.date():
+                sorteio = self._sorteio("ocorrencias", origem, d)
+                if origem is Origem.RELEASE:
+                    for _ in range(sorteio.choice((0, 0, 1, 2))):
+                        hora = datetime.combine(d, datetime.min.time(), tzinfo=FUSO) + timedelta(hours=sorteio.randint(10, 17), minutes=sorteio.randint(0, 59))
+                        codigo = sorteio.choice(("404", "409", "400"))
+                        lista.append(Ocorrencia(hora, "recusa", "POST /atendimentos/respostas", codigo, 0.01, "", "sem_conversa", pedido="simulado"))
+                    if sorteio.random() < 0.15:
+                        hora = datetime.combine(d, datetime.min.time(), tzinfo=FUSO) + timedelta(hours=sorteio.randint(10, 17))
+                        lista.append(Ocorrencia(hora, "email", "Email ao NUDECON", "429", None, PLANO_DE_SAUDE, "encerrou", "falha_envio_email", "1"))
+                        conversas += 1
+                else:
+                    # Os picos do levantamento: 9h e 16h.
+                    for _ in range(sorteio.choice((0, 1, 1, 2, 3))):
+                        hora = datetime.combine(d, datetime.min.time(), tzinfo=FUSO) + timedelta(
+                            hours=sorteio.choice((9, 9, 12, 16, 16, 16, 19)), minutes=sorteio.randint(0, 50)
+                        )
+                        conversas += 1
+                        caiu = sorteio.random() < 0.7
+                        for t in range(1, 4 if caiu else 2):
+                            depois = ("encerrou", "falha_infra_verde") if caiu else ("seguiu", "")
+                            lista.append(
+                                Ocorrencia(
+                                    hora + timedelta(seconds=30 * t), "verde", "Verde: apenado", "TimeoutError", 30.0, PESSOA_PRESA, *depois, f"{t} de 3"
+                                )
+                            )
+                        demora = 90.2 if caiu else 34.6
+                        lista.append(
+                            Ocorrencia(
+                                hora,
+                                "resposta_cortada",
+                                "POST /atendimentos/respostas",
+                                f"200 depois de {round(demora)} s",
+                                demora,
+                                PESSOA_PRESA,
+                                "encerrou" if caiu else "parou",
+                                "falha_infra_verde" if caiu else "",
+                                pedido="simulado",
+                            )
+                        )
+                    if sorteio.random() < 0.2:
+                        hora = datetime.combine(d, datetime.min.time(), tzinfo=FUSO) + timedelta(hours=sorteio.randint(8, 18))
+                        lista.append(
+                            Ocorrencia(
+                                hora,
+                                "recusa",
+                                "POST /atendimentos/respostas",
+                                "409",
+                                0.01,
+                                PESSOA_PRESA,
+                                "ja_encerrada",
+                                "rg_nao_encontrado",
+                                pedido="simulado",
+                            )
+                        )
+                    if d == date(2026, 10, 23):
+                        lista += [Ocorrencia(_h(23, 10, 12, 31), "conversa_cortada", "Banco das conversas", "sem checkpoint", None, PESSOA_PRESA, "parou")] * 5
+                d += timedelta(days=1)
+            lista = sorted((o for o in lista if inicio <= o.hora < fim), key=lambda o: o.hora, reverse=True)
+            return OcorrenciasDoPeriodo(inicio, fim, lista, conversas, False) if lista else None
+
+        return self._ler(fontes.fonte_ocorrencias(origem, dia), gerar)
+
+    # ── Infra ─────────────────────────────────────────────────────────────
+
+    def _horas_da_infra(self, ambiente: Ambiente, inicio: datetime, fim: datetime) -> list[HoraDaInfra]:
+        horas = []
+        h = inicio
+        while h < fim:
+            sorteio = self._sorteio("infra", ambiente, h)
+            expediente = 7 <= h.hour < 19
+            pedidos = (
+                (sorteio.randint(80, 140) if expediente else sorteio.randint(0, 12)) if ambiente is Ambiente.PRODUCAO else sorteio.choice((0, 0, 0, 4, 12))
+            )
+            verde = sorteio.choice((0,) * 12 + (1, 3, 6)) if pedidos else 0
+            cortadas = min(verde, sorteio.choice((0, 1, 2))) if verde else 0
+            horas.append(
+                HoraDaInfra(
+                    hora=h,
+                    pedidos=pedidos,
+                    erros_5xx=cortadas,
+                    erros_4xx=sorteio.choice((0, 0, 0, 1)) if pedidos else 0,
+                    p99=(sorteio.uniform(2, 10) + 25 * bool(cortadas)) if pedidos else None,
+                    saudaveis=1.0,
+                    desejados=1.0,
+                    cpu=sorteio.uniform(1, 4),
+                    memoria=sorteio.uniform(20, 24),
+                    reinicios=1 if h == SUBIDA_DA_PRODUCAO.replace(minute=0) else 0,
+                    banco_cpu=sorteio.uniform(4, 12) + (25 if h.hour == 3 else 0),
+                    banco_conexoes=float(sorteio.randint(5, 11)),
+                    banco_memoria_livre=9.5e8,
+                    saida_erros=0,
+                    ia_recusas=sorteio.choice((0,) * 30 + (1,)),
+                    email_erros=0,
+                    verde_falhas=verde,
+                    respostas_cortadas=cortadas,
+                )
+            )
+            h += timedelta(hours=1)
+        return horas
+
+    def infra_por_hora(self, ambiente: Ambiente, dia: date | None = None) -> Leitura[list[HoraDaInfra]]:
+        def gerar(momento: datetime) -> list[HoraDaInfra] | None:
+            if dia is None:
+                inicio, fim = momento.replace(minute=0, second=0, microsecond=0) - timedelta(hours=23), momento
+            else:
+                inicio = datetime.combine(_o_dia(dia), datetime.min.time(), tzinfo=FUSO)
+                fim = min(inicio + timedelta(days=1), momento)
+            return self._horas_da_infra(ambiente, inicio, fim) or None
+
+        return self._ler(fontes.fonte_infra_por_hora(ambiente, dia), gerar)
+
+    def infra_por_dia(self, ambiente: Ambiente) -> Leitura[list[HoraDaInfra]]:
+        def gerar(momento: datetime) -> list[HoraDaInfra] | None:
+            inicio = datetime.combine(momento.date() - timedelta(days=fontes.DIAS_DA_INFRA - 1), datetime.min.time(), tzinfo=FUSO)
+            return self._horas_da_infra(ambiente, inicio, momento) or None
+
+        return self._ler(fontes.fonte_infra_por_dia(ambiente), gerar)
 
 
 def _o_resto_do_verde(sorteio: random.Random, total: int) -> tuple[int, int, int]:

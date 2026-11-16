@@ -18,6 +18,7 @@ from painel.dados.modelo import (
     Leitura,
     Renovacao,
     ResumoDoDia,
+    ValidadeConferida,
 )
 from painel.precos import custo
 from painel.renovacao import prever_renovacao
@@ -119,3 +120,39 @@ def test_o_custo_dos_30_dias_bate_com_o_levantamento() -> None:
 
 def test_um_dia_sem_tokens_nao_custa_nada() -> None:
     assert custo(fontes.MODELO_DE_CHAT, 0, 0) == 0
+
+
+def test_o_vencimento_de_cada_evento_sai_da_conferencia() -> None:
+    agora = _h(26, 10, 18, 0)
+    conferidas = (
+        ValidadeConferida(_h(24, 10, 12, 13), _h(1, 11, 9, 28)),
+        # A conferência que renovou termina depois da renovação, com a validade antiga.
+        ValidadeConferida(_h(25, 10, 12, 28), _h(1, 11, 9, 28)),
+        ValidadeConferida(_h(26, 10, 15, 4), _h(25, 11, 12, 24)),
+    )
+    credencial = Credencial(_h(25, 10, 12, 27), _h(25, 11, 12, 24), None, None, None, conferidas)
+    eventos = linha_do_tempo.montar(
+        {Ambiente.PRODUCAO: credencial},
+        [IncidenteDeCredencial(Ambiente.PRODUCAO, _h(24, 10, 20, 0), _h(24, 10, 21, 0), 12, 4)],
+        [Renovacao(Ambiente.PRODUCAO, _h(25, 10, 12, 27), container_novo_no_ar=True)],
+        agora,
+    )
+    por_tipo = {e.tipo: e.vencimento for e in eventos}
+    # A conferência de 25/10 leu a validade antes de renovar: a nova sai na de 26/10.
+    assert por_tipo["renovada"] == _h(25, 11, 12, 24)
+    assert por_tipo["gerada"] == por_tipo["a vencer"] == _h(25, 11, 12, 24)
+    assert por_tipo["recusou"] is None and por_tipo["resolvido"] is None
+
+
+def test_a_causa_do_incidente_cruza_renovacao_e_validade() -> None:
+    conferidas = (ValidadeConferida(_h(20, 10, 13, 11), _h(1, 11, 9, 28)), ValidadeConferida(_h(2, 11, 14, 0), _h(1, 11, 9, 28)))
+    credenciais = {Ambiente.PRODUCAO: Credencial(None, _h(1, 11, 9, 28), None, None, None, conferidas)}
+    renovacoes = [Renovacao(Ambiente.PRODUCAO, _h(22, 10, 13, 27), container_novo_no_ar=False)]
+
+    def causa(ambiente: Ambiente, inicio: datetime) -> str:
+        return linha_do_tempo.causa(IncidenteDeCredencial(ambiente, inicio, None, 30, None), credenciais, renovacoes)
+
+    assert causa(Ambiente.PRODUCAO, _h(22, 10, 13, 28)) == "container"
+    assert causa(Ambiente.PRODUCAO, _h(20, 10, 16, 29)) == "no prazo"
+    assert causa(Ambiente.PRODUCAO, _h(2, 11, 15, 0)) == "vencida"
+    assert causa(Ambiente.RELEASE, _h(22, 10, 14, 8)) == "sem validade"

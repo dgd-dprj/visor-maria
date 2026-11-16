@@ -35,7 +35,7 @@ from painel.componentes import graficos
 from painel.componentes.blocos import Valor, indicador
 from painel.componentes.formato import dia_da_semana_e_data, numero
 from painel.dados.fontes import DIAS_DO_REGISTRO
-from painel.dados.modelo import FUSO, NOME_DO_PROBLEMA, RESULTADOS_DO_VERDE, Desfecho, Leitura, nome_do_desfecho, nome_do_fluxo
+from painel.dados.modelo import FUSO, NOME_DO_PROBLEMA, RESULTADOS_DO_VERDE, Desfecho, Leitura, nome_da_ocorrencia, nome_do_desfecho, nome_do_fluxo
 
 GRAFICO = "grafico-de-dia"
 ARMAZEM = "dia-escolhido"
@@ -51,6 +51,8 @@ NOME_DA_SERIE = {campo: nome for campo, nome, _, _ in RESULTADOS_DO_VERDE}
 MOTIVO = "motivo:"
 FLUXO = "fluxo:"
 PROBLEMA = "problema:"
+# O tipo de ocorrência do quadro "Problemas e defeitos" (tela Atendimento).
+OCORRENCIA = "ocorrencia:"
 
 # O que o filtro muda em cada tela, e o que continua sendo de agora (`registrar`).
 _TEXTOS: dict[str, tuple[str, str | None]] = {}
@@ -93,6 +95,11 @@ class Filtro:
     def problema(self) -> str | None:
         """O tipo de problema escolhido (chave de NOME_DO_PROBLEMA)."""
         return self.serie[len(PROBLEMA) :] if self.serie and self.serie.startswith(PROBLEMA) else None
+
+    @property
+    def ocorrencia(self) -> str | None:
+        """O tipo de ocorrência escolhido (chave de TIPOS_DE_OCORRENCIA)."""
+        return self.serie[len(OCORRENCIA) :] if self.serie and self.serie.startswith(OCORRENCIA) else None
 
     def guardar(self) -> dict[str, Any] | None:
         if self == Filtro():
@@ -146,6 +153,8 @@ def nome_da_serie(serie: str) -> str:
         return f"fluxo {nome_do_fluxo(serie[len(FLUXO) :])}"
     if serie.startswith(PROBLEMA):
         return NOME_DO_PROBLEMA.get(serie[len(PROBLEMA) :], serie[len(PROBLEMA) :])
+    if serie.startswith(OCORRENCIA):
+        return nome_da_ocorrencia(serie[len(OCORRENCIA) :])
     return NOME_DA_SERIE.get(serie, serie)
 
 
@@ -331,7 +340,7 @@ def proximo(atual: Filtro, gatilho: dict[str, Any], valor: Any, agora: datetime)
         if not isinstance(codigo, str):
             return None
         # O último item do customdata é a categoria: "fluxo:..." e "problema:..." vêm com o prefixo; o motivo, sem.
-        serie = codigo if codigo.startswith((FLUXO, PROBLEMA, MOTIVO)) else MOTIVO + codigo
+        serie = codigo if codigo.startswith((FLUXO, PROBLEMA, MOTIVO, OCORRENCIA)) else MOTIVO + codigo
         return replace(atual, serie=None if atual.serie == serie else serie)
     if por == "hora":
         dados = ponto.get("customdata")

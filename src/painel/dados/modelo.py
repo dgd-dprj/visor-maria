@@ -4,8 +4,11 @@ Todo número do painel chega como `Leitura`: o valor, de onde ele saiu e quando
 foi lido. A tela nunca recebe um número solto, e por isso nunca mostra um número
 sem a fonte e a hora ao lado (regra 3 do pedido de 2026-10-26).
 
-Os valores são sempre agregados. Nenhum tipo daqui tem `chatId`, telefone, IP ou
-texto digitado: o painel nunca lista conversa (levantamento de 23/10, seção 5).
+Nenhum tipo daqui tem `chatId`, telefone, IP ou texto digitado: o painel nunca
+identifica a conversa (regra 4, revista pela Nicole em 10/11). Os valores são
+agregados, com uma exceção: as ocorrências de problema da tela Atendimento
+(`Ocorrencia`), uma por linha, com a hora, a etapa e o código, sem nada que diga
+de quem é a conversa.
 """
 
 from __future__ import annotations
@@ -210,21 +213,31 @@ RESULTADOS_DO_VERDE = (
 
 
 @dataclass(frozen=True)
+class ValidadeConferida:
+    """A validade que uma conferência diária leu no segredo, antes de renovar."""
+
+    conferida_em: datetime
+    valida_ate: datetime
+
+
+@dataclass(frozen=True)
 class Credencial:
     """A credencial do Verde de um ambiente, pela conferência diária. O painel
-    nunca lê o segredo: a validade vem do log da conferência."""
+    nunca lê o segredo: a validade vem do log da conferência. `conferidas`, da
+    mais velha para a mais nova: até quando valia a credencial em cada dia."""
 
     emitida_em: datetime | None
     valida_ate: datetime
     ultima_aceita: datetime | None
     ultima_conferencia: datetime | None
     conferencia_passou: bool | None
+    conferidas: tuple[ValidadeConferida, ...] = ()
 
 
 @dataclass(frozen=True)
 class IncidenteDeCredencial:
     """Um bloco de recusas da credencial. `fim` None é incidente aberto;
-    `atendimentos` None é "não medido"."""
+    `atendimentos` (as conversas que bateram na recusa) None é "não medido"."""
 
     ambiente: Ambiente
     inicio: datetime
@@ -388,6 +401,9 @@ NOME_DO_DESFECHO = {
     "falha_cadastro": "Falha ao cadastrar",
     "falha_encaminhamento": "Falha ao encaminhar ao órgão",
     "sem_orgao_disponivel": "Nenhum órgão disponível",
+    # Plano de saúde, o envio ao NUDECON (#405 e #423).
+    "falha_envio_email": "Falha ao enviar o email",
+    "imagens_nao_anexadas": "Imagens não anexadas ao email",
     # A triagem por escrita livre que manda direto para atendimento humano, antes de um fluxo.
     "triagem_sem_fluxo": "A triagem não achou um fluxo",
     "triagem_inconsistente": "A triagem se contradisse",
@@ -733,6 +749,8 @@ TIPO_DO_MOTIVO: dict[str, TipoDeProblema] = {
     "falha_encaminhamento": TipoDeProblema.FALHA,
     "sem_orgao_disponivel": TipoDeProblema.FALHA,
     "triagem_inconsistente": TipoDeProblema.FALHA,
+    "falha_envio_email": TipoDeProblema.FALHA,
+    "imagens_nao_anexadas": TipoDeProblema.FALHA,
     "rg_nao_encontrado": TipoDeProblema.IDENTIFICACAO,
     "cpf_nao_encontrado": TipoDeProblema.IDENTIFICACAO,
     "nome_nao_confirmado": TipoDeProblema.IDENTIFICACAO,
@@ -778,6 +796,191 @@ class EnvioDoWhatsapp:
     evento: str
     codigo: str
     vezes: int
+
+
+# ── Problemas e defeitos (tela Atendimento) ───────────────────────────────
+# Uma linha por ocorrência, para investigar bug (decisão da Nicole, 10/11): a regra
+# 4 passou de "nunca listar conversa" para "nunca identificar a conversa". Nenhuma
+# ocorrência traz `chatId`, telefone ou texto: o identificador da conversa só serve,
+# dentro da fonte, para saber o que aconteceu com ela depois, e não sai de lá.
+
+# Cada tipo: o nome, o tom e o que quer dizer, na ordem em que a tela mostra.
+TIPOS_DE_OCORRENCIA: dict[str, tuple[str, str, str]] = {
+    "erro_da_maria": ("Erro da Maria", "ruim", "A Maria quebrou ao responder (5xx). É bug no código: o tipo da exceção diz onde olhar."),
+    "resposta_cortada": (
+        "Resposta depois de 30 s",
+        "ruim",
+        "A Maria respondeu, mas depois dos 30 s em que o CloudFront corta: quem chamou não recebeu a resposta (#344).",
+    ),
+    "fluxo": ("Falha dentro do fluxo", "ruim", "Uma exceção dentro do fluxo, que encerrou a conversa com atendimento humano."),
+    "email": ("Email ao NUDECON falhou", "ruim", "A função que envia o pedido ao NUDECON falhou, recusou ou passou do prazo."),
+    "verde": (
+        "O Verde falhou",
+        "atencao",
+        "A consulta ao Verde voltou com erro, recusa da credencial ou sem resposta. Não conta a pessoa ou o processo que não existem.",
+    ),
+    "ia": ("A IA falhou", "atencao", "Uma função de IA deu erro, e a Maria seguiu com o texto padrão ou sem o que ela daria."),
+    "whatsapp": ("O WhatsApp falhou", "atencao", "O envio direto pelo WhatsApp foi recusado, deu erro ou a mensagem não chegou."),
+    "conversa_cortada": ("Conversa cortada", "rosa", "A conversa perdeu onde estava (sem checkpoint), em geral numa troca de versão."),
+    "triagem": ("A triagem se contradisse", "rosa", "A escrita livre apontou um fluxo que não existe no catálogo."),
+    "recusa": (
+        "Pedido recusado",
+        "azul",
+        "A Maria recusou o pedido (4xx): campo faltando, atendimento que não existe ou já encerrado. Pode ser erro de quem chama.",
+    ),
+}
+
+# O que aconteceu com a conversa depois da ocorrência.
+NOME_DO_DEPOIS = {
+    "encerrou": "Encerrou",
+    "seguiu": "A conversa seguiu",
+    "expirou": "Expirou sem resposta",
+    "parou": "A pessoa não respondeu mais",
+    "recente": "Há menos de 30 min, ainda sem resposta",
+    "ja_encerrada": "Já estava encerrada",
+    "sem_conversa": "Sem conversa ligada",
+}
+
+
+def nome_da_ocorrencia(tipo: str) -> str:
+    return TIPOS_DE_OCORRENCIA.get(tipo, (tipo.replace("_", " "), "", ""))[0]
+
+
+@dataclass(frozen=True)
+class Ocorrencia:
+    """Um problema, como aconteceu: a hora, o tipo (chave de TIPOS_DE_OCORRENCIA),
+    a etapa (a rota, a consulta ao Verde, a função de IA), o código (status HTTP,
+    tipo da exceção, `tipoErro`), quanto demorou e o que aconteceu depois.
+
+    `pedido` é o `reqId` da requisição, quando a linha tem um: é aleatório, não diz
+    de quem é a conversa, e acha a linha inteira no CloudWatch."""
+
+    hora: datetime
+    tipo: str
+    etapa: str
+    codigo: str
+    demora: float | None
+    fluxo: str
+    depois: str
+    motivo: str = ""
+    tentativa: str = ""
+    pedido: str = ""
+
+
+@dataclass(frozen=True)
+class OcorrenciasDoPeriodo:
+    """As ocorrências da janela, da mais nova à mais velha. `conversas` é quantas
+    conversas tiveram pelo menos uma, contadas antes de o identificador sair da fonte;
+    `cortada` diz que a consulta bateu o limite de linhas."""
+
+    inicio: datetime
+    fim: datetime
+    ocorrencias: list[Ocorrencia]
+    conversas: int
+    cortada: bool = False
+
+
+# ── Infra (tela Infra) ────────────────────────────────────────────────────
+# Hora a hora, cada parte da infraestrutura por onde o atendimento passa. O banco,
+# o proxy, a saída para a internet (NAT), o modelo de IA e a função de e-mail são
+# os mesmos para os dois ambientes: o número deles é igual nos dois.
+
+
+@dataclass(frozen=True)
+class HoraDaInfra:
+    """Uma hora de um ambiente. None: a métrica não mandou ponto nessa hora."""
+
+    hora: datetime
+    # A entrada (CloudFront): pedidos e respostas com erro.
+    pedidos: int
+    erros_5xx: int
+    erros_4xx: int
+    # O balanceador e os containers.
+    p99: float | None
+    saudaveis: float | None
+    desejados: float | None
+    cpu: float | None
+    memoria: float | None
+    reinicios: int
+    # Compartilhados: o banco, a saída para a internet, o modelo de IA e o e-mail.
+    banco_cpu: float | None
+    banco_conexoes: float | None
+    banco_memoria_livre: float | None
+    saida_erros: int
+    ia_recusas: int
+    email_erros: int
+    # O Verde, de fora da AWS, pelo que a Maria registrou neste ambiente.
+    verde_falhas: int
+    respostas_cortadas: int
+
+
+class EstadoDaParte(StrEnum):
+    BOM = "bom"
+    ATENCAO = "atencao"
+    RUIM = "ruim"
+    SEM_USO = "sem_uso"
+
+
+# As partes da infraestrutura, na ordem em que a mensagem passa: o nome, o que faz e
+# se é a mesma nos dois ambientes.
+PARTES_DA_INFRA: dict[str, tuple[str, str, bool]] = {
+    "entrada": ("Entrada (CloudFront)", "recebe o pedido da Tykhe e repassa ao balanceador; corta em 30 s", False),
+    "tempo": ("Tempo de resposta", "quanto a Maria leva para responder, pelo balanceador (p99)", False),
+    "containers": ("Containers (ECS)", "rodam a Maria: no ar, CPU, memória e reinícios", False),
+    "banco": ("Banco das conversas (RDS)", "guarda onde cada conversa parou", True),
+    "saida": ("Saída para a internet (NAT)", "leva as consultas ao Verde e à Tykhe para fora da rede", True),
+    "verde": ("Verde", "o sistema da Defensoria que a Maria consulta, fora da AWS", False),
+    "ia": ("Modelo de IA (Bedrock)", "recusas e limitações do modelo, na conta inteira", True),
+    "email": ("Email ao NUDECON (Lambda)", "a função que envia o pedido de plano de saúde", True),
+}
+
+# Os limites de cada estado, por hora. Decididos em 10/11 para começar e ajustáveis:
+# ver docs/decisoes.md, "a tela Infra".
+LIMITE_DO_CORTE_S = 30.0
+LIMITE_DE_LENTIDAO_S = 10.0
+LIMITE_DA_CPU = 80.0
+LIMITE_DA_MEMORIA = 90.0
+LIMITE_DA_CPU_DO_BANCO = (60.0, 80.0)
+
+
+def estado_da_parte(parte: str, h: HoraDaInfra) -> EstadoDaParte:
+    """O estado de uma parte numa hora, pelos limites acima."""
+    e = EstadoDaParte
+    if parte == "entrada":
+        if not h.pedidos:
+            return e.SEM_USO
+        if h.erros_5xx >= 5 or h.erros_5xx / h.pedidos >= 0.05:
+            return e.RUIM
+        return e.ATENCAO if h.erros_5xx else e.BOM
+    if parte == "tempo":
+        if h.p99 is None:
+            return e.SEM_USO
+        if h.p99 >= LIMITE_DO_CORTE_S or h.respostas_cortadas:
+            return e.RUIM
+        return e.ATENCAO if h.p99 >= LIMITE_DE_LENTIDAO_S else e.BOM
+    if parte == "containers":
+        if h.saudaveis is None:
+            return e.SEM_USO
+        desejados = h.desejados or 1
+        if h.saudaveis < 1:
+            return e.RUIM
+        if h.saudaveis < desejados or h.reinicios or (h.cpu or 0) >= LIMITE_DA_CPU or (h.memoria or 0) >= LIMITE_DA_MEMORIA:
+            return e.ATENCAO
+        return e.BOM
+    if parte == "banco":
+        if h.banco_cpu is None:
+            return e.SEM_USO
+        atencao, ruim = LIMITE_DA_CPU_DO_BANCO
+        return e.RUIM if h.banco_cpu >= ruim else e.ATENCAO if h.banco_cpu >= atencao else e.BOM
+    if parte == "saida":
+        return e.RUIM if h.saida_erros >= 100 else e.ATENCAO if h.saida_erros else e.BOM
+    if parte == "verde":
+        return e.RUIM if h.verde_falhas >= 5 else e.ATENCAO if h.verde_falhas else e.BOM
+    if parte == "ia":
+        return e.RUIM if h.ia_recusas >= 10 else e.ATENCAO if h.ia_recusas else e.BOM
+    if parte == "email":
+        return e.RUIM if h.email_erros else e.BOM
+    raise ValueError(f"parte desconhecida: {parte}")
 
 
 def juntar[T, R](leituras: Sequence[Leitura[T]], combinar: Callable[[list[T]], R]) -> Leitura[R]:

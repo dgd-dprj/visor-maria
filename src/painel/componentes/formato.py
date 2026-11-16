@@ -56,6 +56,10 @@ def data_curta(momento: datetime | date) -> str:
     return f"{_local(momento):%d/%m}"
 
 
+def hora_curta(momento: datetime) -> str:
+    return f"{momento.astimezone(FUSO):%H:%M}"
+
+
 def data_e_hora_curta(momento: datetime) -> str:
     return f"{momento.astimezone(FUSO):%d/%m, %H:%M}"
 

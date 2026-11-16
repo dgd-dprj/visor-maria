@@ -12,12 +12,13 @@ import os
 from pathlib import Path
 
 import dash
-from dash import ALL, Dash, Input, Output, State, clientside_callback, dcc, html
+from dash import ALL, Dash, Input, Output, State, callback, clientside_callback, dcc, html
 
 from painel import navegador
 from painel.componentes.cabecalho import TEMAS
 from painel.componentes.menu import menu
 from painel.dados import fonte_simulada_ligada, obter_fonte, sem_credencial_da_aws
+from painel.dados.telas import aquecer
 
 PASTA = Path(__file__).parent
 ATUALIZACAO_MS = 60_000
@@ -136,6 +137,13 @@ clientside_callback(
     Output("relogio-texto", "children"),
     Input("relogio", "n_intervals"),
 )
+
+
+# Ao abrir o painel, e ao trocar de tela, as outras telas são montadas por trás
+# (dados/telas.py, `aquecer`): o primeiro clique em cada uma não espera consulta.
+@callback(Input("url", "pathname"))
+def aquecer_as_outras_telas(caminho: str | None) -> None:
+    aquecer(pagina["layout"] for pagina in dash.page_registry.values() if pagina["path"] != caminho)
 
 
 if __name__ == "__main__":

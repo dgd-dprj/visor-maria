@@ -433,6 +433,8 @@ code, .mono { font-family: var(--fonte-mono); }
 .grade-dupla > div > .quadro { flex: 1; }
 /* A Agora não tem coluna da direita: usa a largura que as outras dividem com ela. */
 .tela-larga { max-width: 1644px; }
+/* A Credencial ocupa a largura toda, em qualquer monitor (pedido de 09/11). */
+.tela-inteira { max-width: none; }
 /* "Exige atenção" com dois terços, "CPU e memória" com um. */
 .grade-dois-tercos { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 14px; align-items: stretch; }
 .grade-dois-tercos > div { display: flex; flex-direction: column; }
@@ -623,6 +625,12 @@ code, .mono { font-family: var(--fonte-mono); }
 .tabela th.numero, .tabela td.numero { text-align: right; }
 .tabela td.mono, .tabela td.numero { white-space: nowrap; }
 .coluna { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
+/* Numa célula de tabela: o nome e, embaixo, uma marca menor (Produção, "atinge o público"). */
+.celula-empilhada { display: flex; flex-direction: column; gap: 2px; }
+.celula-empilhada small { font-size: 0.74rem; }
+/* Linha do tempo em tabela: no celular ela rola de lado, e o texto não se espreme. */
+.tabela-do-tempo td:last-child { min-width: 260px; }
+.tabela-do-tempo td.mono { white-space: nowrap; }
 
 .rotulo-pequeno {
   font-size: 0.68rem;
@@ -842,3 +850,54 @@ code, .mono { font-family: var(--fonte-mono); }
 .linha-hora { color: var(--suave); }
 .linha-codigo code { font-size: 0.76rem; color: var(--suave); }
 .texto-corrido { display: grid; gap: 10px; color: var(--texto); font-size: 0.92rem; line-height: 1.55; }
+
+/* Atendimento: problemas e defeitos (10/11) */
+.filtros-do-quadro { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; border-bottom: 1px solid var(--borda); }
+.filtro-do-quadro { display: grid; gap: 6px; }
+.filtro-do-quadro .rotulo-pequeno { margin: 0; }
+.numeros-dos-problemas { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 16px; border-bottom: 1px solid var(--borda); }
+.legenda-em-linhas { flex-wrap: wrap; gap: 8px 18px; }
+.rolagem-da-tabela { max-height: 620px; overflow: auto; border-top: 1px solid var(--borda); }
+.tabela-de-ocorrencias thead th { position: sticky; top: 0; background: var(--superficie); z-index: 1; }
+.tabela-de-ocorrencias td { vertical-align: top; }
+.tabela-de-ocorrencias .coluna-tipo { white-space: nowrap; }
+.tabela-de-ocorrencias .coluna-tipo .ponto { margin-right: 7px; }
+.detalhe-do-log summary { cursor: pointer; color: var(--azul); font-size: 0.82rem; }
+.detalhe-do-log[open] { min-width: 360px; }
+.detalhe-do-log p { font-size: 0.78rem; margin: 6px 0 4px; }
+.codigo-de-log { display: block; white-space: pre-wrap; word-break: break-all; font-size: 0.74rem; padding: 6px 8px; margin-top: 4px; border: 1px solid var(--borda); border-radius: 6px; user-select: all; }
+.tipos-explicados summary { cursor: pointer; color: var(--suave); font-size: 0.86rem; }
+.tipos-explicados .lista-simples { margin-top: 10px; font-size: 0.86rem; color: var(--suave); }
+
+/* Infra (10/11) */
+.lista-de-picos { list-style: none; margin: 8px 0 0; padding: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 24px; font-size: 0.86rem; color: var(--suave); }
+.lista-de-picos li { display: flex; align-items: baseline; gap: 8px; }
+.lista-de-picos strong { color: var(--texto); font-weight: 600; }
+
+@media (max-width: 1099px) {
+  .filtros-do-quadro { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .numeros-dos-problemas { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .lista-de-picos { grid-template-columns: minmax(0, 1fr); }
+}
+
+@media (max-width: 899px) {
+  .filtros-do-quadro, .numeros-dos-problemas { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+.tabela-de-ocorrencias th, .tabela-de-ocorrencias td { font-size: 0.8rem; padding: 8px 10px; line-height: 1.4; }
+.tabela-de-ocorrencias .mono { font-size: 0.78rem; }
+.graficos-empilhados { display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; }
+.graficos-empilhados > div, .quadro-de-problemas .miolo { min-width: 0; }
+/* Os graves, um a um (10/11) */
+.cartoes-graves { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 8px; }
+.cartao-grave { border: 1px solid var(--borda); border-radius: 10px; padding: 14px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.cartao-grave-com { border-color: var(--ruim); background: var(--fundo-ruim); }
+.cartao-grave-topo { display: flex; flex-direction: column; gap: 2px; }
+.cartao-grave-nome { display: flex; align-items: center; gap: 7px; font-weight: 600; color: var(--texto); font-size: 0.9rem; }
+.cartao-grave-explicacao { color: var(--suave); font-size: 0.78rem; line-height: 1.45; }
+.cartao-grave-dados.definicoes { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 5px 12px; font-size: 0.78rem; margin: 0; }
+.cartao-grave-dados dt, .cartao-grave-dados dd { margin: 0; padding: 0; border: 0; text-align: left; }
+.cartao-grave-dados dt { color: var(--suave); }
+.cartao-grave-dados dd { color: var(--texto); overflow-wrap: anywhere; }
+.botao-pequeno { align-self: flex-start; margin-top: auto; font: inherit; font-size: 0.78rem; color: var(--azul); background: none; border: 1px solid var(--borda); border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+.botao-pequeno:hover { border-color: var(--azul); }
+@media (max-width: 899px) { .cartoes-graves { grid-template-columns: minmax(0, 1fr); } }

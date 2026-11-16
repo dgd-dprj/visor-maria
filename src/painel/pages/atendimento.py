@@ -1,6 +1,7 @@
 """Tela Atendimento: como as conversas terminam?
 
-Segue o rascunho. A origem separa produção antes e depois do corte de versão
+Segue o rascunho. Desde 10/11, com o quadro "Problemas e defeitos": uma linha por
+ocorrência, com gráficos de quando e em que hora (componentes/problemas.py). A origem separa produção antes e depois do corte de versão
 (23/10, 12:31) e o release: os pedaços ficam em botões separados, em vez de
 somados num número só.
 
@@ -10,16 +11,18 @@ lado, a credencial do Verde no mesmo trecho, e a conclusão sai desses números.
 
 from __future__ import annotations
 
+from concurrent.futures import TimeoutError as FuturoAtrasado
 from datetime import date, datetime, time, timedelta
 from functools import partial
 from typing import Any, cast
 
 import dash
 import plotly.graph_objects as go
-from dash import Input, Output, callback, dcc, html
+from dash import ALL, Input, Output, callback, dcc, html
+from dash.exceptions import PreventUpdate
 
 from painel import lateral
-from painel.componentes import filtro_de_dia, graficos
+from painel.componentes import filtro_de_dia, graficos, problemas
 from painel.componentes.blocos import (
     Tom,
     Valor,
@@ -35,7 +38,7 @@ from painel.componentes.cabecalho import cabecalho
 from painel.componentes.filtro_de_dia import Filtro
 from painel.componentes.formato import MESES, data_curta, dia_da_semana_e_data, numero
 from painel.dados import obter_fonte
-from painel.dados.fontes import DIAS_DO_REGISTRO
+from painel.dados.fontes import DIAS_DO_REGISTRO, fonte_ocorrencias
 from painel.dados.modelo import (
     AMBIENTE_DA_ORIGEM,
     FUSO,
@@ -44,18 +47,22 @@ from painel.dados.modelo import (
     ContagemPorDia,
     Estado,
     Leitura,
+    OcorrenciasDoPeriodo,
     Origem,
     ResumoDoOrquestrador,
     TrechoDeNaoEncontrado,
 )
-from painel.dados.telas import LeiturasDoAtendimento, dias_passados, ler_atendimento, montar_ja, preparar
+from painel.dados.telas import LeiturasDoAtendimento, dias_passados, ler_atendimento, ler_ja, ler_ocorrencias, montar_ja, preparar
 from painel.lateral import coluna, com_lateral
 
 dash.register_page(__name__, path="/atendimento", name="Atendimento", order=2, title="Atendimento · Visor Maria")
 
 # O começo do trecho TypeScript, o mesmo de dados/real.py.
 INICIO_DO_TYPESCRIPT = date(2026, 10, 16)
-FILTRADO = "Os números, os encerramentos por RG não encontrado, a escrita livre e como terminaram mostram o que foi escolhido, dentro do trecho da origem."
+FILTRADO = (
+    "Os números, os encerramentos por RG não encontrado, a escrita livre, como terminaram e os problemas mostram o que foi escolhido, "
+    "dentro do trecho da origem."
+)
 filtro_de_dia.registrar("atendimento", FILTRADO)
 
 DESCRICAO_DA_ORIGEM = {
@@ -341,16 +348,32 @@ def _corpo(dados: LeiturasDoAtendimento, escolha: Filtro = Filtro()) -> list[Any
         html.Div(_indicadores(dados, escolha), className="grade-indicadores"),
         _quadro_nao_acharam(dados),
         html.Div([_quadro_orquestrador(dados), _ainda_sem_resposta(dados)], className="grade-dupla"),
-        NOTA_DO_PE,
-        lista_de_fontes(dados.todas(), dados.agora),
     ]
 
 
+def _pe(dados: LeiturasDoAtendimento) -> list[Any]:
+    return [NOTA_DO_PE, lista_de_fontes(dados.todas(), dados.agora)]
+
+
 def blocos(origem: Origem, escolha: Filtro = Filtro()) -> list[Any]:
-    return _corpo(ler_atendimento(origem, escolha.quando), escolha)
+    dados = ler_atendimento(origem, escolha.quando)
+    return [*_corpo(dados, escolha), *_pe(dados)]
+
+
+# Quanto a tela espera a leitura dos problemas antes de abrir sem ela (fria, leva alguns segundos).
+ESPERA_DOS_PROBLEMAS_S = 1.5
+
+
+def _problemas_ja_lidos(escolha: Filtro) -> Leitura[OcorrenciasDoPeriodo] | None:
+    futuro = ler_ja(partial(ler_ocorrencias, Origem.PRODUCAO_PY, escolha.quando))
+    try:
+        return futuro.result(timeout=ESPERA_DOS_PROBLEMAS_S)
+    except FuturoAtrasado:
+        return None
 
 
 def _tela(escolha: Filtro) -> html.Div:
+    ocorrencias = _problemas_ja_lidos(escolha)
     dados = ler_atendimento(Origem.PRODUCAO_PY, escolha.quando)
     return html.Div(
         [
@@ -376,6 +399,10 @@ def _tela(escolha: Filtro) -> html.Div:
             filtro_de_dia.faixa("atendimento", escolha),
             _quadro_por_dia(dados),
             html.Div(_corpo(dados, escolha), id="atendimento-corpo", className="tela-corpo"),
+            problemas.quadro(
+                ocorrencias, fonte_ocorrencias(Origem.PRODUCAO_PY, escolha.quando), AMBIENTE_DA_ORIGEM[Origem.PRODUCAO_PY], escolha, None, dados.agora
+            ),
+            html.Div(_pe(dados), id="atendimento-pe", className="tela-corpo"),
         ],
         className="tela",
     )
@@ -383,13 +410,56 @@ def _tela(escolha: Filtro) -> html.Div:
 
 @callback(
     Output("atendimento-corpo", "children"),
+    Output("atendimento-pe", "children"),
     Input("relogio", "n_intervals"),
     Input("atendimento-origem", "value"),
     filtro_de_dia.entrada("atendimento"),
     prevent_initial_call=True,
 )
-def atualizar(_: int | None, origem: str | None, dia: str | None) -> list[Any]:
-    return blocos(Origem(origem or Origem.PRODUCAO_PY.value), filtro_de_dia.filtro(dia))
+def atualizar(_: int | None, origem: str | None, dia: str | None) -> tuple[list[Any], list[Any]]:
+    escolha = filtro_de_dia.filtro(dia)
+    dados = ler_atendimento(Origem(origem or Origem.PRODUCAO_PY.value), escolha.quando)
+    return _corpo(dados, escolha), _pe(dados)
+
+
+# Os problemas: os filtros do quadro ficam fora da área refeita, e as opções de código seguem a janela.
+# Sem prevent_initial_call: na subida, aplica o tema guardado no navegador aos gráficos.
+@callback(
+    Output(problemas.CONTEUDO, "children"),
+    Output(problemas.FILTRO_DO_CODIGO, "options"),
+    # O relógio do próprio quadro, de 5 em 5 minutos: o de 1 minuto refazia a lista inteira a cada volta.
+    Input(problemas.RELOGIO, "n_intervals"),
+    Input("atendimento-origem", "value"),
+    Input("tema", "data"),
+    filtro_de_dia.entrada("atendimento"),
+    Input(problemas.FILTRO_DO_TIPO, "value"),
+    Input(problemas.FILTRO_DO_FLUXO, "value"),
+    Input(problemas.FILTRO_DO_CODIGO, "value"),
+    Input(problemas.FILTRO_DO_DEPOIS, "value"),
+)
+def atualizar_os_problemas(
+    _: int | None, origem: str | None, tema: str | None, dia: str | None, tipo: str | None, fluxo: str | None, codigo: str | None, depois: str | None
+) -> tuple[list[Any], Any]:
+    escolhida = Origem(origem or Origem.PRODUCAO_PY.value)
+    escolha = filtro_de_dia.filtro(dia)
+    leitura = ler_ocorrencias(escolhida, escolha.quando)
+    escolhas = problemas.Escolhas(tipo or None, fluxo or None, codigo or None, depois or None)
+    miolo = problemas.conteudo(leitura, AMBIENTE_DA_ORIGEM[escolhida], escolha, escolhas, tema, leitura.lido_em)
+    return miolo, problemas.opcoes_de_codigo(leitura)
+
+
+# "Ver na lista", num cartão de grave: escolhe o tipo no filtro do quadro.
+@callback(
+    Output(problemas.FILTRO_DO_TIPO, "value"),
+    Input({"tipo": problemas.BOTAO_DO_GRAVE, "grave": ALL}, "n_clicks"),
+    prevent_initial_call=True,
+)
+def ver_o_grave(cliques: list[int | None]) -> str:
+    gatilho = dash.ctx.triggered_id
+    # O cartão refeito chega com zero cliques: só o clique de verdade escolhe.
+    if not isinstance(gatilho, dict) or not any(cliques):
+        raise PreventUpdate
+    return str(gatilho["grave"])
 
 
 # Sem prevent_initial_call: na subida, aplica o tema guardado no navegador.
@@ -412,7 +482,7 @@ def layout(dia: str | None = None, **_: str) -> html.Div:
     # Os dias do trecho da origem que abre, lidos por trás: o clique num deles já encontra a leitura.
     for passado in dias_passados(DIAS_DO_REGISTRO, agora):
         if passado >= graficos.CORTE_DE_VERSAO.date():
-            for consulta in ("resumo_do_periodo", "nao_encontrado", "orquestrador", "desfechos", "origem_nao_atendida"):
+            for consulta in ("resumo_do_periodo", "nao_encontrado", "orquestrador", "desfechos", "origem_nao_atendida", "ocorrencias"):
                 preparar(consulta, Origem.PRODUCAO_PY, passado)
     lado = montar_ja(partial(lateral.do_atendimento, Origem.PRODUCAO_PY, None, Filtro(escolhido)))
     return com_lateral(_tela(Filtro(escolhido)), coluna("atendimento-lateral", lado.result()))

@@ -66,6 +66,16 @@ def _dia_escolhido(*argumentos: Any) -> datetime | None:
 COM_DIA = ", ou o dia escolhido na tela"
 
 
+def _mes_escolhido(*argumentos: Any) -> datetime | None:
+    """Com o mês escolhido no gráfico, a janela fecha no fim dele; sem ele, anda com o relógio."""
+    mes = next((a for a in argumentos if isinstance(a, date)), None)
+    return fim_do_mes(mes) if mes is not None else None
+
+
+# A janela de quem aceita o mês escolhido no gráfico.
+COM_MES = ", ou o mês escolhido no gráfico"
+
+
 CONSULTAS: dict[str, Consulta] = {
     # Agora e Sistema
     "saude_servico": Consulta("o último minuto da métrica do balanceador", UM_MINUTO),
@@ -107,8 +117,8 @@ CONSULTAS: dict[str, Consulta] = {
     "recursos_do_servico": Consulta("os últimos 10 minutos e o máximo das últimas 24 horas", UM_MINUTO),
     "alarmes": Consulta("o estado de agora e os disparos dos últimos 7 dias", UM_MINUTO),
     "cpu_e_latencia": Consulta("as últimas 24 horas, hora a hora, dos dois ambientes" + COM_DIA, CINCO_MINUTOS, _dia_escolhido),
-    "horarios_da_conferencia": Consulta("as conferências diárias dos últimos 30 dias", CINCO_MINUTOS),
-    "verde_do_mes": Consulta("os 30 dias até hoje, de 0h do primeiro até agora", CINCO_MINUTOS),
+    "horarios_da_conferencia": Consulta("as conferências diárias dos últimos 30 dias" + COM_MES, CINCO_MINUTOS, _mes_escolhido),
+    "verde_do_mes": Consulta("os 30 dias até hoje, de 0h do primeiro até agora" + COM_MES, CINCO_MINUTOS, _mes_escolhido),
     # Observatório da IA
     "erros_da_ia": Consulta("os 30 dias de logs" + COM_DIA, CINCO_MINUTOS, _dia_escolhido),
     "uso_da_ia": Consulta("os últimos 7 dias" + COM_DIA, CINCO_MINUTOS, _dia_escolhido),
@@ -125,4 +135,10 @@ CONSULTAS: dict[str, Consulta] = {
     "fluxos_por_dia": Consulta("os 30 dias até hoje, de 0h do primeiro até agora", QUINZE_MINUTOS),
     "problemas_por_dia": Consulta("os 30 dias até hoje, de 0h do primeiro até agora", QUINZE_MINUTOS),
     "encaminhamentos_por_dia": Consulta("os 30 dias até hoje, de 0h do primeiro até agora", QUINZE_MINUTOS),
+    # Atendimento, problemas e defeitos: cada leitura são duas ou três consultas ao
+    # trecho inteiro da origem (cerca de 4 MB de logs por dia em produção, medido em 10/11).
+    "ocorrencias": Consulta("o trecho da origem, como em resumo_do_periodo" + COM_DIA, CINCO_MINUTOS, _dia_escolhido),
+    # Infra: métricas hora a hora (cobradas por métrica pedida) e duas linhas de log por hora.
+    "infra_por_hora": Consulta("as últimas 24 horas, hora a hora" + COM_DIA, CINCO_MINUTOS, _dia_escolhido),
+    "infra_por_dia": Consulta("os 14 dias até hoje, hora a hora, de 0h do primeiro até agora", QUINZE_MINUTOS),
 }

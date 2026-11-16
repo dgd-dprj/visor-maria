@@ -4,7 +4,7 @@ Acima de 900 px a barra fica fixa à esquerda. Abaixo disso some, e o botão no
 topo abre a barra por cima da tela, com um fundo escuro que fecha ao toque. Abrir
 e fechar roda no navegador (painel.js), sem ida ao servidor.
 
-As oito telas estão sempre no menu. As que ainda não foram construídas aparecem
+As nove telas estão sempre no menu (a Infra entrou em 10/11). As que ainda não foram construídas aparecem
 desativadas, sem link, até a Agora ser aprovada.
 """
 
@@ -22,6 +22,7 @@ TELAS = (
     ("Atendimento", "Atendimento", "conversa"),
     ("Fluxos", "Fluxos", "fluxo"),
     ("Sistema", "Sistema", "servidor"),
+    ("Infra", "Infra", "alerta"),
     ("Relatório do dia", "Relatório do dia", "arquivo"),
     ("Relatório da Aplicação", "Relatório da Aplicação", "carteira"),
     ("Observatório da IA", "Observatório da IA", "ia"),
