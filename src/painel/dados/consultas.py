@@ -141,4 +141,8 @@ CONSULTAS: dict[str, Consulta] = {
     # Infra: métricas hora a hora (cobradas por métrica pedida) e duas linhas de log por hora.
     "infra_por_hora": Consulta("as últimas 24 horas, hora a hora" + COM_DIA, CINCO_MINUTOS, _dia_escolhido),
     "infra_por_dia": Consulta("os 14 dias até hoje, hora a hora, de 0h do primeiro até agora", QUINZE_MINUTOS),
+    # QA: só GitHub, sem custo de consulta. O log de um job que terminou não muda,
+    # e a fonte real guarda o que já leu de cada um; a lista de rodadas é relida a cada 5 minutos.
+    "qa": Consulta("as rodadas de QA desde 13/11", CINCO_MINUTOS),
+    "alertas_de_codigo": Consulta("os alertas do CodeQL abertos agora", QUINZE_MINUTOS),
 }

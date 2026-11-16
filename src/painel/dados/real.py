@@ -52,7 +52,9 @@ from painel.dados.modelo import (
     AMBIENTE_DA_ORIGEM,
     FUSO,
     PREFIXO_DOS_ALARMES,
+    QA,
     Alarme,
+    AlertaDeCodigo,
     Ambiente,
     Assunto,
     ContagemPorDia,
@@ -60,6 +62,7 @@ from painel.dados.modelo import (
     ConversasDoFluxo,
     CpuELatencia,
     Credencial,
+    DefeitoDoQA,
     Desfecho,
     DesfechoDoFluxo,
     DiaDoModelo,
@@ -95,6 +98,7 @@ from painel.dados.modelo import (
     ResumoDoOrquestrador,
     ResumoDoPeriodo,
     RodadaDaTriagem,
+    RodadaDoQA,
     Rotina,
     SaidaDaTriagem,
     SaudeServico,
@@ -308,6 +312,88 @@ def _hora_do_github(texto: str) -> datetime:
     return datetime.strptime(texto[:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=UTC).astimezone(FUSO)
 
 
+# ── QA: o que cada rodada imprime ─────────────────────────────────────────
+
+# O log do GitHub começa cada linha com a hora ("2026-11-16T18:10:45.1234567Z ").
+_HORA_DA_LINHA = re.compile(r"^\S+Z ")
+# scripts/qa/fluxos_ponta_a_ponta.py (maria-langgraph-pp #502): o resumo de cada grupo e a linha de cada cenário que falhou.
+CENARIOS_OK = re.compile(r"\*\*(\d+) de (\d+) cenários? OK\.\*\*")
+CENARIO_QUE_FALHOU = re.compile(r"^\| (.+?) \| \*\*FALHOU\*\* \| (.*?) \|\s*$")
+# migracao-specs/qa/qa_staging.py: "**20 de 20 OK.** Custo de IA: US$ 0.0052." e "- ❌ conferência (detalhe)".
+RESUMO_DA_STAGING = re.compile(r"\*\*(\d+) de (\d+) OK\.\*\*\s*Custo de IA: ~?US\$ (\d+(?:[.,]\d+)?)")
+CONFERENCIA_QUE_FALHOU = re.compile(r"^- ❌ (.+?)(?: \((.*)\))?\s*$")
+# O comentário de 16/11 (PR #496) trouxe duas rodadas numa tabela: "| 1ª (09:50) | **11 de 18** | US$ 0,0105 |".
+RODADA_NA_TABELA = re.compile(r"^\| (\d+)ª \((\d{2}):(\d{2})\) \| \*\*(\d+) de (\d+)\*\* \| ~?US\$ (\d+(?:[.,]\d+)?) \|")
+COMMIT_NO_RESUMO = re.compile(r"commit `?([0-9a-f]{7,40})`?")
+MOTIVO_NA_TABELA = re.compile(r"\*\*O que falhou[^*]*\*\*\s*(.+)")
+# O detalhe vai à tela como veio do roteiro (dados inventados), cortado para caber na linha.
+TAMANHO_DO_DETALHE = 300
+
+
+def _dinheiro_do_texto(texto: str) -> float:
+    return float(texto.replace(",", "."))
+
+
+def ler_log_do_ponta_a_ponta(texto: str) -> tuple[int, int, list[tuple[str, str]]]:
+    """Do log do job `ponta_a_ponta`: quantos cenários passaram, de quantos, e os que falharam."""
+    passaram = total = 0
+    falhas: list[tuple[str, str]] = []
+    for bruta in texto.splitlines():
+        linha = _HORA_DA_LINHA.sub("", bruta, count=1).strip()
+        if achou := CENARIOS_OK.search(linha):
+            passaram, total = passaram + int(achou.group(1)), total + int(achou.group(2))
+        elif achou := CENARIO_QUE_FALHOU.match(linha):
+            falhas.append((achou.group(1).strip(), achou.group(2).strip()[:TAMANHO_DO_DETALHE]))
+    return passaram, total, falhas
+
+
+def ler_comentario_da_staging(corpo: str, publicado: datetime, pr: int) -> tuple[list[RodadaDoQA], list[DefeitoDoQA]]:
+    """As rodadas e os defeitos de um comentário "QA da staging" num PR para a staging.
+
+    Entende o resumo do roteiro e a tabela de rodadas do comentário de 16/11. Um
+    comentário que não traz nenhum dos dois não vira rodada."""
+    commit = achou.group(1)[:7] if (achou := COMMIT_NO_RESUMO.search(corpo)) else ""
+    linhas = corpo.splitlines()
+    rodadas: list[RodadaDoQA] = []
+    defeitos: list[DefeitoDoQA] = []
+    if achou := RESUMO_DA_STAGING.search(corpo):
+        rodada = RodadaDoQA(publicado, "staging", pr, commit, int(achou.group(1)), int(achou.group(2)), _dinheiro_do_texto(achou.group(3)))
+        rodadas.append(rodada)
+        for linha in linhas:
+            if falhou := CONFERENCIA_QUE_FALHOU.match(linha.strip()):
+                defeitos.append(DefeitoDoQA(publicado, "staging", falhou.group(1), (falhou.group(2) or "")[:TAMANHO_DO_DETALHE], pr, commit))
+        return rodadas, defeitos
+    motivo = next((m.group(1) for linha in linhas if (m := MOTIVO_NA_TABELA.match(linha.strip()))), "")
+    for linha in linhas:
+        if not (achou := RODADA_NA_TABELA.match(linha.strip())):
+            continue
+        quando = publicado.replace(hour=int(achou.group(2)), minute=int(achou.group(3)), second=0, microsecond=0)
+        passaram, total = int(achou.group(4)), int(achou.group(5))
+        rodadas.append(RodadaDoQA(quando, "staging", pr, commit, passaram, total, _dinheiro_do_texto(achou.group(6))))
+        if passaram < total:
+            cenario = f"{achou.group(1)}ª rodada: {contagem_de(total - passaram)} de {total} falharam"
+            defeitos.append(DefeitoDoQA(quando, "staging", cenario, motivo[:TAMANHO_DO_DETALHE], pr, commit))
+    return rodadas, defeitos
+
+
+def contagem_de(quantas: int) -> str:
+    return f"{quantas} conferência" if quantas == 1 else f"{quantas} conferências"
+
+
+def marcar_resolvidos(rodadas: list[RodadaDoQA], defeitos: list[DefeitoDoQA]) -> list[DefeitoDoQA]:
+    """Um defeito fica resolvido na primeira rodada seguinte que passou inteira: do
+    mesmo PR, no ponta a ponta; qualquer uma, no QA da staging (ela testa a branch toda)."""
+
+    def resolvido_em(defeito: DefeitoDoQA) -> datetime | None:
+        seguintes = sorted(
+            (r for r in rodadas if r.tipo == defeito.tipo and r.quando > defeito.quando and r.passou and (defeito.tipo == "staging" or r.pr == defeito.pr)),
+            key=lambda r: r.quando,
+        )
+        return seguintes[0].quando if seguintes else None
+
+    return [replace(d, resolvido_em=resolvido_em(d)) for d in defeitos]
+
+
 class FonteReal:
     nome = "real"
 
@@ -328,6 +414,9 @@ class FonteReal:
         self._conferencias_lidas: tuple[float, dict[Ambiente, list[_LinhasDaConferencia]]] | None = None
         self._dimensoes: dict[Ambiente, list[dict[str, str]]] = {}
         self._bedrock: tuple[float, dict[date, GastoDeIA]] | None = None
+        # QA: uma execução do CI que terminou não muda; o que ela disse fica guardado pelo id.
+        self._ponta_a_ponta_lido: dict[int, tuple[RodadaDoQA, list[DefeitoDoQA]] | None] = {}
+        self._trava_do_qa = threading.Lock()
 
     # ── Leitura com estado ────────────────────────────────────────────────
 
@@ -657,6 +746,108 @@ class FonteReal:
             return sorted(renovacoes, key=lambda r: r.momento)
 
         return self._ler(fontes.fonte_renovacoes(), gerar)
+
+    # ── GitHub: QA ────────────────────────────────────────────────────────
+
+    def _rodada_do_ponta_a_ponta(self, execucao: dict[str, Any], pr_da_branch: dict[str, int]) -> tuple[RodadaDoQA, list[DefeitoDoQA]] | None:
+        """A rodada do job `ponta_a_ponta` de uma execução do CI; None se ela não tem o job (antes de 16/11).
+
+        O GitHub só liga a execução ao PR enquanto ele está aberto (`pull_requests`):
+        depois do merge, o PR vem pela branch (`pr_da_branch`)."""
+        with self._trava_do_qa:
+            if execucao["id"] in self._ponta_a_ponta_lido:
+                return self._ponta_a_ponta_lido[execucao["id"]]
+        jobs: list[dict[str, Any]] = self._github.json(f"actions/runs/{execucao['id']}/jobs").get("jobs", [])
+        job = next((j for j in jobs if j.get("name") == "ponta_a_ponta" and j.get("conclusion") in ("success", "failure")), None)
+        resultado: tuple[RodadaDoQA, list[DefeitoDoQA]] | None = None
+        if job is not None:
+            try:
+                passaram, total, falhas = ler_log_do_ponta_a_ponta(self._github.texto(f"actions/jobs/{job['id']}/logs"))
+            except urllib.error.HTTPError as erro:
+                # O GitHub apaga o log com o tempo (410) ou não o tem (404): a rodada fica pelo resultado do job.
+                if erro.code not in (404, 410):
+                    raise
+                passaram, total, falhas = 0, 0, []
+            quando = _hora_do_github(job.get("completed_at") or execucao["created_at"])
+            prs = execucao.get("pull_requests") or []
+            pr = prs[0]["number"] if prs else pr_da_branch.get(str(execucao.get("head_branch")))
+            commit = str(execucao.get("head_sha", ""))[:7]
+            if job["conclusion"] == "failure" and not falhas:
+                falhas = [("A Maria não chegou aos cenários", "o job falhou antes do roteiro (subida do Docker ou da Maria); ver o log do job")]
+            rodada = RodadaDoQA(quando, "ponta_a_ponta", pr, commit, passaram, total, 0.0)
+            resultado = (rodada, [DefeitoDoQA(quando, "ponta_a_ponta", nome, detalhe, pr, commit) for nome, detalhe in falhas])
+        with self._trava_do_qa:
+            self._ponta_a_ponta_lido[execucao["id"]] = resultado
+        return resultado
+
+    def _rodadas_da_staging(self, prs: list[dict[str, Any]]) -> tuple[list[RodadaDoQA], list[DefeitoDoQA]]:
+        desde = datetime.combine(fontes.INICIO_DO_QA, time(), tzinfo=FUSO)
+        recentes = [p for p in prs if (p.get("base") or {}).get("ref") == "staging" and _hora_do_github(p["created_at"]) >= desde - timedelta(days=1)]
+
+        def do_pr(pr: dict[str, Any]) -> tuple[list[RodadaDoQA], list[DefeitoDoQA]]:
+            rodadas: list[RodadaDoQA] = []
+            defeitos: list[DefeitoDoQA] = []
+            comentarios: list[dict[str, Any]] = self._github.json(f"issues/{pr['number']}/comments", {"per_page": 100})
+            for comentario in comentarios:
+                corpo = comentario.get("body") or ""
+                if "QA da staging" not in corpo:
+                    continue
+                r, d = ler_comentario_da_staging(corpo, _hora_do_github(comentario["created_at"]), pr["number"])
+                rodadas += r
+                defeitos += d
+            return rodadas, defeitos
+
+        rodadas: list[RodadaDoQA] = []
+        defeitos: list[DefeitoDoQA] = []
+        with ThreadPoolExecutor(max_workers=3) as grupo:
+            for r, d in grupo.map(do_pr, recentes):
+                rodadas += r
+                defeitos += d
+        return rodadas, defeitos
+
+    def qa(self) -> Leitura[QA]:
+        def gerar(_: datetime) -> QA | None:
+            execucoes = [e for e in self._github.execucoes("ci.yml", fontes.INICIO_DO_QA) if e.get("status") == "completed"]
+            # Os 100 PRs mais novos: dão o PR de cada branch e os PRs para a staging, numa leitura só.
+            prs: list[dict[str, Any]] = self._github.json("pulls", {"state": "all", "per_page": 100, "sort": "created", "direction": "desc"})
+            pr_da_branch: dict[str, int] = {}
+            for p in prs:  # do mais novo para o mais velho: a branch fica com o PR mais novo dela
+                pr_da_branch.setdefault(p["head"]["ref"], p["number"])
+            with ThreadPoolExecutor(max_workers=3) as grupo:
+                do_ci = [r for r in grupo.map(lambda e: self._rodada_do_ponta_a_ponta(e, pr_da_branch), execucoes) if r is not None]
+            da_staging = self._rodadas_da_staging(prs)
+            rodadas = sorted([r for r, _ in do_ci] + da_staging[0], key=lambda r: r.quando, reverse=True)
+            if not rodadas:
+                return None
+            defeitos = marcar_resolvidos(rodadas, [d for _, ds in do_ci for d in ds] + da_staging[1])
+            return QA(tuple(rodadas), tuple(sorted(defeitos, key=lambda d: d.quando, reverse=True)))
+
+        return self._ler(fontes.fonte_qa(), gerar)
+
+    def alertas_de_codigo(self) -> Leitura[list[AlertaDeCodigo]]:
+        def gerar(_: datetime) -> list[AlertaDeCodigo]:
+            try:
+                alertas: list[dict[str, Any]] = self._github.json("code-scanning/alerts", {"state": "open", "per_page": 100})
+            except urllib.error.HTTPError as erro:
+                if erro.code in (403, 404):
+                    raise FalhaDeLeitura("O login do GitHub desta máquina não lê os alertas do CodeQL (precisa da permissão security_events).") from erro
+                raise
+            resultado = []
+            for alerta in alertas:
+                regra = alerta.get("rule") or {}
+                onde = (alerta.get("most_recent_instance") or {}).get("location") or {}
+                resultado.append(
+                    AlertaDeCodigo(
+                        regra=regra.get("description") or regra.get("id") or "regra sem nome",
+                        gravidade=regra.get("security_severity_level") or regra.get("severity") or "sem gravidade",
+                        arquivo=onde.get("path", ""),
+                        linha=int(onde.get("start_line") or 0),
+                        desde=_hora_do_github(alerta["created_at"]),
+                    )
+                )
+            return resultado
+
+        return self._ler(fontes.fonte_alertas_de_codigo(), gerar)
 
     # ── Verde ─────────────────────────────────────────────────────────────
 

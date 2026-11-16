@@ -30,7 +30,9 @@ from painel.dados import fontes
 from painel.dados.modelo import (
     AMBIENTE_DA_ORIGEM,
     FUSO,
+    QA,
     Alarme,
+    AlertaDeCodigo,
     Ambiente,
     Assunto,
     ContagemPorDia,
@@ -38,6 +40,7 @@ from painel.dados.modelo import (
     ConversasDoFluxo,
     CpuELatencia,
     Credencial,
+    DefeitoDoQA,
     Desfecho,
     DesfechoDoFluxo,
     Destino,
@@ -74,6 +77,7 @@ from painel.dados.modelo import (
     ResumoDoOrquestrador,
     ResumoDoPeriodo,
     RodadaDaTriagem,
+    RodadaDoQA,
     Rotina,
     SaidaDaTriagem,
     SaudeServico,
@@ -254,6 +258,53 @@ class FonteSimulada:
 
     def renovacoes(self) -> Leitura[list[Renovacao]]:
         return self._ler(fontes.fonte_renovacoes(), lambda _: list(RENOVACOES))
+
+    # ── QA ────────────────────────────────────────────────────────────────
+
+    def qa(self) -> Leitura[QA]:
+        def gerar(agora: datetime) -> QA:
+            def antes(dias: int, hora: int) -> datetime:
+                return (agora - timedelta(days=dias)).replace(hour=hora, minute=10, second=0, microsecond=0)
+
+            rodadas = (
+                RodadaDoQA(antes(0, 9), "staging", 511, "9a8b7c6", 19, 20, 0.0058),
+                RodadaDoQA(antes(0, 8), "ponta_a_ponta", 510, "a1b2c3d", 15, 15, 0.0),
+                RodadaDoQA(antes(1, 16), "staging", 509, "e4f5a6b", 20, 20, 0.0061),
+                RodadaDoQA(antes(1, 14), "ponta_a_ponta", 508, "c7d8e9f", 15, 15, 0.0),
+                RodadaDoQA(antes(1, 11), "ponta_a_ponta", 508, "b1a2c3d", 14, 15, 0.0),
+                RodadaDoQA(antes(2, 15), "staging", 506, "f0e1d2c", 19, 20, 0.0123),
+                RodadaDoQA(antes(3, 10), "ponta_a_ponta", 505, "d4c3b2a", 15, 15, 0.0),
+            )
+            defeitos = (
+                DefeitoDoQA(
+                    antes(1, 11),
+                    "ponta_a_ponta",
+                    "Violência doméstica: CPF com a conta errada não vai ao Verde (#497)",
+                    "passo 5 («12345678900»): a resposta não tem «Esse CPF não está certo». Recebido: status 'concluido'",
+                    508,
+                    "b1a2c3d",
+                    resolvido_em=antes(1, 14),
+                ),
+                DefeitoDoQA(
+                    antes(2, 15),
+                    "staging",
+                    "a triagem achou os três assuntos",
+                    "voltaram 2 assuntos: a pessoa presa ficou de fora",
+                    506,
+                    "f0e1d2c",
+                    resolvido_em=antes(1, 16),
+                ),
+                DefeitoDoQA(antes(0, 9), "staging", "o encerrar pelo número fecha o assunto", "o assunto 2 continuou em aberto", 511, "9a8b7c6"),
+            )
+            return QA(rodadas, defeitos)
+
+        return self._ler(fontes.fonte_qa(), gerar)
+
+    def alertas_de_codigo(self) -> Leitura[list[AlertaDeCodigo]]:
+        return self._ler(
+            fontes.fonte_alertas_de_codigo(),
+            lambda agora: [AlertaDeCodigo("Informação sensível registrada no log", "media", "src/maria/integracoes/verde.py", 291, agora - timedelta(days=2))],
+        )
 
     def verde_por_dia(self, ambiente: Ambiente) -> Leitura[list[DiaDoVerde]]:
         def gerar(momento: datetime) -> list[DiaDoVerde]:

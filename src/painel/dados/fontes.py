@@ -16,7 +16,9 @@ from typing import Protocol
 
 from painel.dados.modelo import (
     AMBIENTE_DA_ORIGEM,
+    QA,
     Alarme,
+    AlertaDeCodigo,
     Ambiente,
     ContagemPorDia,
     ContagemPorHora,
@@ -532,6 +534,31 @@ def fonte_infra_por_dia(ambiente: Ambiente) -> Fonte:
     return _fonte_infra(ambiente, f"juntada por dia, nos últimos {DIAS_DA_INFRA} dias")
 
 
+# O QA começou em 13/11 (o roteiro da staging); o ponta a ponta do CI, em 16/11 (#502).
+INICIO_DO_QA = date(2026, 11, 13)
+
+
+def fonte_qa() -> Fonte:
+    return Fonte(
+        curto="GitHub",
+        nome="Rodadas de QA desde 13/11: o ponta a ponta do CI e o resumo do QA da staging nos PRs para a staging",
+        identificador=(
+            'dgd-dprj/maria-langgraph-pp: ci.yml, job ponta_a_ponta (linhas "cenários OK" e "FALHOU" do log); '
+            'comentários "QA da staging" nos PRs com base staging (linhas "de N OK", "Custo de IA" e "❌")'
+        ),
+        atraso="minutos",
+    )
+
+
+def fonte_alertas_de_codigo() -> Fonte:
+    return Fonte(
+        curto="GitHub",
+        nome="Alertas abertos do CodeQL",
+        identificador="dgd-dprj/maria-langgraph-pp: code scanning, state=open (codeql.yml, #502)",
+        atraso="minutos",
+    )
+
+
 class FonteDeDados(Protocol):
     """As consultas com `dia` leem, com ele, aquele dia de Brasília, de 0h a 24h
     (ou até agora, se for hoje), em vez da janela padrão. É o filtro de dia das
@@ -640,3 +667,8 @@ class FonteDeDados(Protocol):
     def infra_por_hora(self, ambiente: Ambiente, dia: date | None = None) -> Leitura[list[HoraDaInfra]]: ...
 
     def infra_por_dia(self, ambiente: Ambiente) -> Leitura[list[HoraDaInfra]]: ...
+
+    # QA: as rodadas (ponta a ponta do CI e QA da staging), os defeitos e o gasto; e os alertas do CodeQL
+    def qa(self) -> Leitura[QA]: ...
+
+    def alertas_de_codigo(self) -> Leitura[list[AlertaDeCodigo]]: ...

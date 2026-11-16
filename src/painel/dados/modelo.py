@@ -983,6 +983,70 @@ def estado_da_parte(parte: str, h: HoraDaInfra) -> EstadoDaParte:
     raise ValueError(f"parte desconhecida: {parte}")
 
 
+# ── QA ────────────────────────────────────────────────────────────────────
+
+# O QA de ponta a ponta do CI (maria-langgraph-pp #502) roda com o Verde, a IA e o
+# e-mail simulados: não gasta nada. O QA da staging conversa com o release de verdade.
+TIPOS_DE_RODADA = {"ponta_a_ponta": "Ponta a ponta (CI)", "staging": "QA da staging"}
+# Teto de IA de cada rodada do QA da staging (decisão da Nicole, 16/11): passou, o QA para e avisa.
+TETO_DA_RODADA = 0.10
+
+
+@dataclass(frozen=True)
+class RodadaDoQA:
+    """Uma rodada de QA: quantas conferências passaram e o gasto de IA dela.
+
+    `custo` é em dólares. No ponta a ponta é zero (tudo simulado); no QA da
+    staging, é o que o roteiro somou pelos `tokensGastos`, no preço do Haiku (o
+    teto seguro: o Qwen do release custa menos)."""
+
+    quando: datetime
+    tipo: str
+    pr: int | None
+    commit: str
+    passaram: int
+    total: int
+    custo: float
+
+    @property
+    def passou(self) -> bool:
+        return self.total > 0 and self.passaram == self.total
+
+
+@dataclass(frozen=True)
+class DefeitoDoQA:
+    """Uma conferência que falhou numa rodada: o que a equipe precisa acertar.
+
+    `detalhe` é o que o roteiro disse (o passo, o esperado e o que veio), sempre
+    com dados inventados. `resolvido_em` é a primeira rodada seguinte do mesmo PR
+    (ou da staging) que passou inteira; None enquanto o defeito está aberto."""
+
+    quando: datetime
+    tipo: str
+    cenario: str
+    detalhe: str
+    pr: int | None
+    commit: str
+    resolvido_em: datetime | None = None
+
+
+@dataclass(frozen=True)
+class QA:
+    rodadas: tuple[RodadaDoQA, ...]
+    defeitos: tuple[DefeitoDoQA, ...]
+
+
+@dataclass(frozen=True)
+class AlertaDeCodigo:
+    """Um alerta aberto do CodeQL: a regra, a gravidade e onde."""
+
+    regra: str
+    gravidade: str
+    arquivo: str
+    linha: int
+    desde: datetime
+
+
 def juntar[T, R](leituras: Sequence[Leitura[T]], combinar: Callable[[list[T]], R]) -> Leitura[R]:
     """Uma leitura feita de várias (os dias de um mês, por exemplo).
 

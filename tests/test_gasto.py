@@ -198,8 +198,9 @@ def test_toda_tela_tem_a_coluna_da_direita(layout_da_tela: Callable[[str], Any])
 
     for nome, _, _ in TELAS:
         layout = layout_da_tela(nome)
-        if nome in ("Agora", "Infra"):
+        if nome in ("Agora", "Infra", "QA"):
             # A Agora (28/10) e a Infra (10/11) usam a largura toda: os gráficos de hora em hora pedem espaço.
+            # O QA (16/11) também: as tabelas de defeitos e de rodadas pedem espaço.
             assert "tela-larga" in str(_props(layout).get("className") or ""), nome
             continue
         if nome == "Credencial do Verde":

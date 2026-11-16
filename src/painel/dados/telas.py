@@ -24,7 +24,9 @@ from painel.dados.fontes import DIAS_DO_REGISTRO
 from painel.dados.modelo import (
     AMBIENTE_DA_ORIGEM,
     FUSO,
+    QA,
     Alarme,
+    AlertaDeCodigo,
     Ambiente,
     Assunto,
     ContagemPorDia,
@@ -643,3 +645,27 @@ def ler_fluxos(ambiente: Ambiente, dia: date | None = None) -> LeiturasDosFluxos
         problemas=problemas.result(),
         encaminhamentos=encaminhamentos.result(),
     )
+
+
+# ── QA ────────────────────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class LeiturasDoQA:
+    """As rodadas e os defeitos do QA e os alertas do CodeQL. As duas leituras
+    trazem o período inteiro (desde 13/11): o dia escolhido na tela recorta aqui,
+    sem consulta nova, porque o GitHub não cobra pela leitura."""
+
+    agora: datetime
+    dia: date | None
+    qa: Leitura[QA]
+    alertas: Leitura[list[AlertaDeCodigo]]
+
+    def todas(self) -> list[Leitura[Any]]:
+        return [self.qa, self.alertas]
+
+
+def ler_qa(dia: date | None = None) -> LeiturasDoQA:
+    fonte = obter_fonte()
+    qa, alertas = ler_ja(fonte.qa), ler_ja(fonte.alertas_de_codigo)
+    return LeiturasDoQA(agora=datetime.now(FUSO), dia=dia, qa=qa.result(), alertas=alertas.result())

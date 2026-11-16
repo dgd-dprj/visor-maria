@@ -2,6 +2,32 @@
 
 Cada decisão com a data, quem decidiu, o motivo e o que ela custa.
 
+## 2026-11-16: a tela QA
+
+**Decisão (Nicole).** O QA da Maria entra no Visor numa tela própria (`/qa`,
+visor-maria#10). Ela mostra o gasto e o que o QA pegou para acertar, sem repetir
+o que as outras telas já mostram:
+
+- a contagem das execuções do CI ("Testes a cada mudança") continua na Agora, no
+  Sistema e no Relatório do dia; o QA mostra só o que foi conferido, conferência
+  por conferência;
+- o gasto total do release continua no Relatório da Aplicação; o QA mostra o gasto
+  de cada rodada, contra o teto de US$ 0,10 por rodada da staging.
+
+As fontes são só do GitHub: o log do job `ponta_a_ponta` do CI (maria-langgraph-pp
+#502), os comentários "QA da staging" nos PRs para a staging e os alertas abertos
+do CodeQL. Um defeito fica resolvido na primeira rodada seguinte que passa inteira:
+do mesmo PR, no ponta a ponta; qualquer uma, no QA da staging. A tela usa a largura
+toda, como a Agora e a Infra, porque as tabelas pedem espaço.
+
+**Por quê.** O QA precisa ter o gasto e mostrar o que deu defeito para acertar.
+
+**O que custa.** Nada na AWS. No GitHub, uma leitura dos jobs por execução do CI
+desde 13/11 (o que uma execução terminada disse fica guardado) e uma por PR para a
+staging, a cada 5 minutos com a tela aberta. O gasto da staging é o que o roteiro
+somou no preço do Haiku, o teto seguro (o Qwen do release custa menos). Quando a
+depuração com IA (maria-langgraph-pp #503) existir, o gasto dela entra aqui.
+
 ## 2026-11-16: o release é lido em São Paulo
 
 **Decisão (Nicole).** O release da Maria passou para `sa-east-1` em 16/11 e o da

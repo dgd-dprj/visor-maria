@@ -20,11 +20,12 @@ da leitura ao lado:
 | Relatório do dia | Como foi o dia? | `/dia` |
 | Relatório da Aplicação | De onde vem o gasto, em que dia e em que mês? | `/aplicacao` |
 | Observatório da IA | A IA está respondendo bem, e onde ela erra? | `/ia` |
+| QA | O QA está pegando os defeitos, e quanto custa? | `/qa` |
 
 > **Estado em 28/10/2026:** as oito telas leem **dados reais** (CloudWatch e
 > GitHub), com as credenciais de quem roda o painel. Toda tela tem, à direita,
-> a coluna "Mais sinais" (embaixo, em tela menor que 1600 px), menos a Agora e a Infra,
-> que usam a largura toda para os gráficos de hora em hora (a Infra entrou em 10/11). Para ir ao ar
+> a coluna "Mais sinais" (embaixo, em tela menor que 1600 px), menos a Agora, a Infra e o QA,
+> que usam a largura toda (a Infra entrou em 10/11; o QA, em 16/11, só com o GitHub). Para ir ao ar
 > numa tarefa própria, faltam as permissões de [Permissões](#permissões). Por que
 > o painel tem repositório próprio está em [docs/decisoes.md](docs/decisoes.md).
 
@@ -38,7 +39,9 @@ da leitura ao lado:
   `botocore[crt]` (já nas dependências) e de um login válido.
 - **GitHub:** `GITHUB_TOKEN` com leitura do `dgd-dprj/maria-langgraph-pp` ou,
   sem ele, o login do `gh` da máquina. Serve para as rotinas, a validade da
-  credencial do Verde (do log da conferência diária) e as mudanças na IA.
+  credencial do Verde (do log da conferência diária), as mudanças na IA e a tela
+  QA (logs do job `ponta_a_ponta`, comentários "QA da staging" e os alertas do
+  CodeQL, que pedem a permissão `security_events`).
 - **Nada mais:** o painel não lê o banco da Maria nem o segredo da credencial.
 
 A primeira abertura de cada tela, com o cache vazio, leva de 10 a 40 segundos
