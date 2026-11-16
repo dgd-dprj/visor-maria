@@ -65,7 +65,8 @@ def test_cada_ambiente_le_o_seu_grupo_de_logs() -> None:
     producao = fonte.resumo_do_dia(Ambiente.PRODUCAO).fonte.identificador
     release = fonte.resumo_do_dia(Ambiente.RELEASE).fonte.identificador
     assert producao.startswith("/ecs/maria-langgraph-pp/api,")
-    assert release.startswith("/ecs/maria-langgraph-pp-release/api,")
+    assert release.startswith("/ecs/maria-langgraph-pp-release-sp/api,")
+    assert (fontes.REGIAO[Ambiente.PRODUCAO], fontes.REGIAO[Ambiente.RELEASE]) == ("us-east-1", "sa-east-1")
 
 
 def test_o_grafico_do_verde_tem_oito_dias_terminando_hoje() -> None:

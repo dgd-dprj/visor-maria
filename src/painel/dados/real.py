@@ -111,9 +111,7 @@ from painel.dados.modelo import (
 
 registro = logging.getLogger(__name__)
 
-REGIAO = "us-east-1"
 REPOSITORIO = "dgd-dprj/maria-langgraph-pp"
-CLUSTER = "maria-langgraph-pp"
 INICIO_DAS_ROTINAS = date(2026, 9, 19)
 # Produção passou a rodar a versão Python em 23/10, às 12:31; o incidente da
 # credencial de produção foi de 22/10, 13:27, até 23/10, 12:34 (levantamento de 23/10).
@@ -318,9 +316,13 @@ class FonteReal:
         self._cache = cache
         self._github = github or GitHub()
         configuracao = Config(retries={"max_attempts": 3, "mode": "standard"}, max_pool_connections=20)
-        sessao = boto3.Session(region_name=REGIAO)
-        self._logs = sessao.client("logs", config=configuracao)
-        self._metricas = sessao.client("cloudwatch", config=configuracao)
+        # Um cliente por região: cada ambiente lê os logs e as métricas onde roda (fontes.REGIAO).
+        regioes = {*fontes.REGIAO.values(), fontes.REGIAO_GLOBAL}
+        sessoes = {r: boto3.Session(region_name=r) for r in regioes}
+        self._logs_em = {r: s.client("logs", config=configuracao) for r, s in sessoes.items()}
+        self._metricas_em = {r: s.client("cloudwatch", config=configuracao) for r, s in sessoes.items()}
+        # Os alarmes, o CloudFront, a Lambda e o Bedrock da produção, cobrado na tela financeira.
+        self._metricas = self._metricas_em[fontes.REGIAO_GLOBAL]
         self._trava = threading.Lock()
         self._trava_das_conferencias = threading.Lock()
         self._conferencias_lidas: tuple[float, dict[Ambiente, list[_LinhasDaConferencia]]] | None = None
@@ -360,17 +362,23 @@ class FonteReal:
     # ── Logs Insights ─────────────────────────────────────────────────────
 
     def _consultar(self, ambientes: Iterable[Ambiente], inicio: datetime, fim: datetime, consulta: str, limite: int = 1000) -> list[dict[str, str]]:
+        ambientes = list(ambientes)
         grupos = [fontes.GRUPO_DE_LOGS[a] for a in ambientes]
+        regioes = {fontes.REGIAO[a] for a in ambientes}
+        if len(regioes) != 1:
+            # O Logs Insights não junta grupos de regiões diferentes numa consulta.
+            raise ValueError(f"consulta com grupos em mais de uma região: {grupos}")
+        logs = self._logs_em[regioes.pop()]
         inicio = max(inicio, self._agora() - timedelta(days=fontes.DIAS_DO_REGISTRO))
         if fim <= inicio:
             return []
-        qid = self._logs.start_query(logGroupNames=grupos, startTime=int(inicio.timestamp()), endTime=int(fim.timestamp()), queryString=consulta, limit=limite)[
+        qid = logs.start_query(logGroupNames=grupos, startTime=int(inicio.timestamp()), endTime=int(fim.timestamp()), queryString=consulta, limit=limite)[
             "queryId"
         ]
         prazo = relogio.monotonic() + ESPERA_DA_CONSULTA
         espera = 0.5
         while relogio.monotonic() < prazo:
-            resposta = self._logs.get_query_results(queryId=qid)
+            resposta = logs.get_query_results(queryId=qid)
             if resposta["status"] == "Complete":
                 return [{c["field"]: c["value"] for c in linha if c["field"] != "@ptr"} for linha in resposta["results"]]
             if resposta["status"] in ("Failed", "Cancelled", "Timeout"):
@@ -378,7 +386,7 @@ class FonteReal:
             relogio.sleep(espera)
             espera = min(espera * 1.5, 3.0)
         try:
-            self._logs.stop_query(queryId=qid)
+            logs.stop_query(queryId=qid)
         except ClientError:
             pass
         raise FalhaDeLeitura("A consulta aos logs passou de 60 segundos.")
@@ -390,9 +398,17 @@ class FonteReal:
     # ── Métricas ──────────────────────────────────────────────────────────
 
     def _serie(
-        self, namespace: str, metrica: str, dimensoes: list[dict[str, str]], estatistica: str, periodo: int, inicio: datetime, fim: datetime
+        self,
+        namespace: str,
+        metrica: str,
+        dimensoes: list[dict[str, str]],
+        estatistica: str,
+        periodo: int,
+        inicio: datetime,
+        fim: datetime,
+        regiao: str = fontes.REGIAO_GLOBAL,
     ) -> list[tuple[datetime, float]]:
-        resposta = self._metricas.get_metric_data(
+        resposta = self._metricas_em[regiao].get_metric_data(
             MetricDataQueries=[
                 {
                     "Id": "m",
@@ -412,7 +428,8 @@ class FonteReal:
         with self._trava:
             if ambiente not in self._dimensoes:
                 prefixo = f"targetgroup/{fontes.TARGET_GROUP[ambiente]}/"
-                metricas = self._metricas.list_metrics(Namespace="AWS/ApplicationELB", MetricName="HealthyHostCount")["Metrics"]
+                cliente = self._metricas_em[fontes.REGIAO[ambiente]]
+                metricas = cliente.list_metrics(Namespace="AWS/ApplicationELB", MetricName="HealthyHostCount")["Metrics"]
                 for m in metricas:
                     nomes = {d["Name"]: d["Value"] for d in m["Dimensions"]}
                     if nomes.get("TargetGroup", "").startswith(prefixo) and "LoadBalancer" in nomes and len(nomes) == 2:
@@ -426,7 +443,7 @@ class FonteReal:
             return self._dimensoes[ambiente]
 
     def _servico(self, ambiente: Ambiente) -> list[dict[str, str]]:
-        return [{"Name": "ClusterName", "Value": CLUSTER}, {"Name": "ServiceName", "Value": fontes.SERVICO_ECS[ambiente]}]
+        return [{"Name": "ClusterName", "Value": fontes.CLUSTER[ambiente]}, {"Name": "ServiceName", "Value": fontes.SERVICO_ECS[ambiente]}]
 
     def _ultimo(self, serie: list[tuple[datetime, float]]) -> float | None:
         return serie[-1][1] if serie else None
@@ -437,13 +454,29 @@ class FonteReal:
         def gerar(agora: datetime) -> SaudeServico:
             saudaveis = self._ultimo(
                 self._serie(
-                    "AWS/ApplicationELB", "HealthyHostCount", self._dimensoes_do_balanceador(ambiente), "Minimum", 60, agora - timedelta(minutes=10), agora
+                    "AWS/ApplicationELB",
+                    "HealthyHostCount",
+                    self._dimensoes_do_balanceador(ambiente),
+                    "Minimum",
+                    60,
+                    agora - timedelta(minutes=10),
+                    agora,
+                    fontes.REGIAO[ambiente],
                 )
             )
             if saudaveis is None:
                 raise FalhaDeLeitura("O balanceador não mandou a contagem nos últimos 10 minutos.")
             desejados = self._ultimo(
-                self._serie("ECS/ContainerInsights", "DesiredTaskCount", self._servico(ambiente), "Maximum", 60, agora - timedelta(minutes=10), agora)
+                self._serie(
+                    "ECS/ContainerInsights",
+                    "DesiredTaskCount",
+                    self._servico(ambiente),
+                    "Maximum",
+                    60,
+                    agora - timedelta(minutes=10),
+                    agora,
+                    fontes.REGIAO[ambiente],
+                )
             )
             return SaudeServico(int(saudaveis), int(desejados) if desejados is not None else 1)
 
@@ -452,7 +485,16 @@ class FonteReal:
     def implantacoes_em_curso(self, ambiente: Ambiente) -> Leitura[int]:
         def gerar(agora: datetime) -> int:
             valor = self._ultimo(
-                self._serie("ECS/ContainerInsights", "DeploymentCount", self._servico(ambiente), "Maximum", 60, agora - timedelta(minutes=10), agora)
+                self._serie(
+                    "ECS/ContainerInsights",
+                    "DeploymentCount",
+                    self._servico(ambiente),
+                    "Maximum",
+                    60,
+                    agora - timedelta(minutes=10),
+                    agora,
+                    fontes.REGIAO[ambiente],
+                )
             )
             if valor is None:
                 raise FalhaDeLeitura("O ECS não mandou a contagem de implantações nos últimos 10 minutos.")
@@ -1103,8 +1145,9 @@ class FonteReal:
                 inicio, fim = agora.replace(minute=0, second=0, microsecond=0) - timedelta(hours=23), agora
             else:
                 inicio, fim = no_dia(dia, agora)
-            pedidos = dict(self._serie("AWS/ApplicationELB", "RequestCount", dimensoes, "Sum", 3600, inicio, fim))
-            erros = dict(self._serie("AWS/ApplicationELB", "HTTPCode_Target_5XX_Count", dimensoes, "Sum", 3600, inicio, fim))
+            regiao = fontes.REGIAO[ambiente]
+            pedidos = dict(self._serie("AWS/ApplicationELB", "RequestCount", dimensoes, "Sum", 3600, inicio, fim, regiao))
+            erros = dict(self._serie("AWS/ApplicationELB", "HTTPCode_Target_5XX_Count", dimensoes, "Sum", 3600, inicio, fim, regiao))
             horas = [h for h in (inicio + timedelta(hours=n) for n in range(24)) if h < fim]
             return [RequisicoesPorHora(h, int(pedidos.get(h, 0)), int(erros.get(h, 0))) for h in horas]
 
@@ -1114,7 +1157,7 @@ class FonteReal:
         def gerar(agora: datetime) -> RecursosDoServico:
             servico = self._servico(ambiente)
             series = {
-                nome: self._serie("ECS/ContainerInsights", nome, servico, "Average", 300, agora - timedelta(hours=24), agora)
+                nome: self._serie("ECS/ContainerInsights", nome, servico, "Average", 300, agora - timedelta(hours=24), agora, fontes.REGIAO[ambiente])
                 for nome in ("CpuUtilized", "CpuReserved", "MemoryUtilized", "MemoryReserved")
             }
             if not all(series.values()):
@@ -1175,8 +1218,10 @@ class FonteReal:
             horas = [h for h in (inicio + timedelta(hours=n) for n in range(24)) if h < fim]
             linhas = []
             for ambiente in Ambiente:
-                cpu = dict(self._serie("AWS/ECS", "CPUUtilization", self._servico(ambiente), "Average", 3600, inicio, fim))
-                p99 = dict(self._serie("AWS/ApplicationELB", "TargetResponseTime", self._dimensoes_do_balanceador(ambiente), "p99", 3600, inicio, fim))
+                regiao = fontes.REGIAO[ambiente]
+                cpu = dict(self._serie("AWS/ECS", "CPUUtilization", self._servico(ambiente), "Average", 3600, inicio, fim, regiao))
+                balanceador = self._dimensoes_do_balanceador(ambiente)
+                p99 = dict(self._serie("AWS/ApplicationELB", "TargetResponseTime", balanceador, "p99", 3600, inicio, fim, regiao))
                 linhas += [CpuELatencia(h, ambiente, cpu.get(h), p99.get(h)) for h in horas]
             return linhas if any(x.cpu is not None or x.p99 is not None for x in linhas) else None
 
@@ -1611,9 +1656,9 @@ class FonteReal:
     # ── Infra ─────────────────────────────────────────────────────────────
 
     def _varias_series(
-        self, pedidos: dict[str, tuple[str, str, list[dict[str, str]], str]], periodo: int, inicio: datetime, fim: datetime
+        self, pedidos: dict[str, tuple[str, str, list[dict[str, str]], str]], periodo: int, inicio: datetime, fim: datetime, regiao: str
     ) -> dict[str, dict[datetime, float]]:
-        """Várias métricas numa chamada só: id -> (namespace, métrica, dimensões, estatística)."""
+        """Várias métricas da mesma região numa chamada só: id -> (namespace, métrica, dimensões, estatística)."""
         consultas = [
             {"Id": id_, "MetricStat": {"Metric": {"Namespace": ns, "MetricName": m, "Dimensions": d}, "Period": periodo, "Stat": stat}}
             for id_, (ns, m, d, stat) in pedidos.items()
@@ -1621,7 +1666,7 @@ class FonteReal:
         resultado: dict[str, dict[datetime, float]] = {id_: {} for id_ in pedidos}
         argumentos: dict[str, Any] = {"MetricDataQueries": consultas, "StartTime": inicio, "EndTime": fim, "ScanBy": "TimestampAscending"}
         while True:
-            resposta = self._metricas.get_metric_data(**argumentos)
+            resposta = self._metricas_em[regiao].get_metric_data(**argumentos)
             for serie in resposta["MetricDataResults"]:
                 resultado[serie["Id"]].update({t.astimezone(FUSO): float(v) for t, v in zip(serie["Timestamps"], serie["Values"], strict=True)})
             if not resposta.get("NextToken"):
@@ -1634,13 +1679,24 @@ class FonteReal:
 
         entrada = d(DistributionId=fontes.DISTRIBUICAO[ambiente], Region="Global")
         servico, balanceador = self._servico(ambiente), self._dimensoes_do_balanceador(ambiente)
-        banco, modelo = d(DBInstanceIdentifier=fontes.BANCO), d(ModelId=fontes.MODELO_DE_CHAT)
-        saida, email = d(NatGatewayId=fontes.SAIDA_NAT), d(FunctionName=fontes.FUNCAO_DO_EMAIL)
-        series = self._varias_series(
+        banco, modelo = d(DBInstanceIdentifier=fontes.BANCO[ambiente]), d(ModelId=fontes.MODELO_DO[ambiente])
+        saida, email = d(NatGatewayId=fontes.SAIDA_NAT[ambiente]), d(FunctionName=fontes.FUNCAO_DO_EMAIL)
+        # O CloudFront e a Lambda mandam as métricas para a Virgínia; o resto fica na região do ambiente.
+        globais = self._varias_series(
             {
                 "pedidos": ("AWS/CloudFront", "Requests", entrada, "Sum"),
                 "taxa5": ("AWS/CloudFront", "5xxErrorRate", entrada, "Average"),
                 "taxa4": ("AWS/CloudFront", "4xxErrorRate", entrada, "Average"),
+                "email_erros": ("AWS/Lambda", "Errors", email, "Sum"),
+                "email_limitadas": ("AWS/Lambda", "Throttles", email, "Sum"),
+            },
+            3600,
+            inicio,
+            fim,
+            fontes.REGIAO_GLOBAL,
+        )
+        regionais = self._varias_series(
+            {
                 "p99": ("AWS/ApplicationELB", "TargetResponseTime", balanceador, "p99"),
                 "saudaveis": ("AWS/ApplicationELB", "HealthyHostCount", balanceador, "Minimum"),
                 "desejados": ("ECS/ContainerInsights", "DesiredTaskCount", servico, "Maximum"),
@@ -1654,13 +1710,13 @@ class FonteReal:
                 "ia_pedido": ("AWS/Bedrock", "InvocationClientErrors", modelo, "Sum"),
                 "ia_servico": ("AWS/Bedrock", "InvocationServerErrors", modelo, "Sum"),
                 "ia_limitadas": ("AWS/Bedrock", "InvocationThrottles", modelo, "Sum"),
-                "email_erros": ("AWS/Lambda", "Errors", email, "Sum"),
-                "email_limitadas": ("AWS/Lambda", "Throttles", email, "Sum"),
             },
             3600,
             inicio,
             fim,
+            fontes.REGIAO[ambiente],
         )
+        series = {**regionais, **globais}
         linhas = self._consultar(
             [ambiente],
             inicio,

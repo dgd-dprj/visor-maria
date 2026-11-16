@@ -64,27 +64,38 @@ from painel.dados.modelo import (
     UsoDaIA,
 )
 
+# Produção segue na Virgínia. O release passou para São Paulo em 16/11, com os
+# nomes terminados em -sp, e o da Virgínia foi desligado (maria-langgraph-pp,
+# docs/infra-sa-east-1.md, #463 e #500).
+REGIAO = {Ambiente.PRODUCAO: "us-east-1", Ambiente.RELEASE: "sa-east-1"}
+# O CloudFront e a Lambda do e-mail mandam as métricas só para a Virgínia, nos dois ambientes.
+REGIAO_GLOBAL = "us-east-1"
 GRUPO_DE_LOGS = {
     Ambiente.PRODUCAO: "/ecs/maria-langgraph-pp/api",
-    Ambiente.RELEASE: "/ecs/maria-langgraph-pp-release/api",
+    Ambiente.RELEASE: "/ecs/maria-langgraph-pp-release-sp/api",
 }
-SERVICO_ECS = {Ambiente.PRODUCAO: "api", Ambiente.RELEASE: "api-release"}
+CLUSTER = {Ambiente.PRODUCAO: "maria-langgraph-pp", Ambiente.RELEASE: "maria-langgraph-pp-sp"}
+SERVICO_ECS = {Ambiente.PRODUCAO: "api", Ambiente.RELEASE: "api-release-sp"}
 TARGET_GROUP = {
     Ambiente.PRODUCAO: "maria-langgraph-pp-api",
-    Ambiente.RELEASE: "maria-langgraph-pp-api-release",
+    Ambiente.RELEASE: "maria-langgraph-pp-release-sp",
 }
 LOGS_DO = {Ambiente.PRODUCAO: "logs de produção", Ambiente.RELEASE: "logs do release"}
 # Na tela financeira, para quem lê de finanças: o mesmo grupo de logs, sem a palavra técnica.
 REGISTRO_DO = {Ambiente.PRODUCAO: "registro da aplicação em produção", Ambiente.RELEASE: "registro da aplicação no release"}
 # A infraestrutura de cada ambiente (levantamento de 10/11, pelas métricas): a
 # distribuição do CloudFront de produção teve 4.107 pedidos em 7 dias, e a do release, 286.
-DISTRIBUICAO = {Ambiente.PRODUCAO: "E3AYMLBF0ZRZL3", Ambiente.RELEASE: "EMY0HA3227AG0"}
-# Os mesmos para os dois ambientes.
-BANCO = "maria-chat-prod-pg"
-PROXY_DO_BANCO = "maria-chat-prod-proxy"
-SAIDA_NAT = "nat-0dc2b3f3dc8a5d353"
+# A do release em São Paulo é a de cloudfront.tf (api_https_url_release_sp), em uso desde 16/11.
+DISTRIBUICAO = {Ambiente.PRODUCAO: "E3AYMLBF0ZRZL3", Ambiente.RELEASE: "E1ZY4LVRDV8EK3"}
+BANCO = {Ambiente.PRODUCAO: "maria-chat-prod-pg", Ambiente.RELEASE: "maria-chat-sp-pg"}
+PROXY_DO_BANCO = {Ambiente.PRODUCAO: "maria-chat-prod-proxy", Ambiente.RELEASE: "maria-chat-sp-proxy"}
+SAIDA_NAT = {Ambiente.PRODUCAO: "nat-0dc2b3f3dc8a5d353", Ambiente.RELEASE: "nat-02426cb2130abd20b"}
+# Uma função só, na Virgínia, para os dois ambientes.
 FUNCAO_DO_EMAIL = "maria-email-nudecon"
+# O modelo da produção, que a tela financeira cobra.
 MODELO_DE_CHAT = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+# Em São Paulo, o release usa o Qwen, para a inferência ficar no Brasil (terraform-sp, bedrock_model_id).
+MODELO_DO = {Ambiente.PRODUCAO: MODELO_DE_CHAT, Ambiente.RELEASE: "qwen.qwen3-vl-235b-a22b"}
 MODELO_DE_EMBEDDING = "amazon.titan-embed-text-v2:0"
 
 # O Logs Insights cobra pelo que varre, e as telas ficam abertas o dia todo:
@@ -503,8 +514,10 @@ def _fonte_infra(ambiente: Ambiente, quando: str) -> Fonte:
             f"AWS/CloudFront Requests, 5xxErrorRate e 4xxErrorRate, {DISTRIBUICAO[ambiente]}; "
             f"AWS/ApplicationELB TargetResponseTime (p99) e HealthyHostCount, {TARGET_GROUP[ambiente]}; "
             f"AWS/ECS CPUUtilization e MemoryUtilization e ECS/ContainerInsights DesiredTaskCount, serviço {SERVICO_ECS[ambiente]}; "
-            f"AWS/RDS CPUUtilization, DatabaseConnections e FreeableMemory, {BANCO}; AWS/NATGateway ErrorPortAllocation e PacketsDropCount, {SAIDA_NAT}; "
-            f"AWS/Bedrock InvocationClientErrors, InvocationServerErrors e InvocationThrottles, {MODELO_DE_CHAT}; AWS/Lambda Errors e Throttles, {FUNCAO_DO_EMAIL}; "
+            f"AWS/RDS CPUUtilization, DatabaseConnections e FreeableMemory, {BANCO[ambiente]}; "
+            f"AWS/NATGateway ErrorPortAllocation e PacketsDropCount, {SAIDA_NAT[ambiente]}; "
+            f"AWS/Bedrock InvocationClientErrors, InvocationServerErrors e InvocationThrottles, {MODELO_DO[ambiente]}; "
+            f"AWS/Lambda Errors e Throttles, {FUNCAO_DO_EMAIL}; região {REGIAO[ambiente]}; "
             f'{GRUPO_DE_LOGS[ambiente]}, evento verde_chamada (sem sucesso), linhas "request completed" acima de 30 s e "Application startup complete."'
         ),
         atraso="cerca de 1 minuto",

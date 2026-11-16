@@ -60,8 +60,9 @@ Sem credencial da AWS, o painel abre, mas quase todo número fica de fora (a
 Agora inteira, que é quase toda do CloudWatch). Só aparecem os que vêm do
 GitHub. Antes de rodar:
 
-1. **Acesso à AWS.** Peça ao Ícaro leitura na conta da Maria (região
-   `us-east-1`), com as permissões do item 6 de [Permissões](#permissões).
+1. **Acesso à AWS.** Peça ao Ícaro leitura na conta da Maria, nas duas regiões:
+   `us-east-1` (produção, CloudFront, alarmes e Lambda do e-mail) e `sa-east-1`
+   (release, desde 16/11), com as permissões do item 6 de [Permissões](#permissões).
 2. **Login na AWS** com a [AWS CLI](https://docs.aws.amazon.com/cli/), no perfil
    que o Ícaro indicar:
 
@@ -310,7 +311,7 @@ da Maria (as três regras estão em `docs/decisoes.md`).
 4. **Chave nova no bucket de estado** (`maria-tfstate-185327115563`, chave `visor-maria/terraform.tfstate`) e uso da trava `maria-tf-lock`, que são do stack antigo.
 5. **Um papel para aplicar o Terraform do painel**, restrito a recursos com prefixo `visor-maria`. Com ele, a Nicole aplica dali em diante sem acesso a nada da Maria. (A credencial dela hoje não cria recursos na AWS, pelo que os testes de leitura mostraram; ela não tem permissão nem para simular a própria política.)
 6. **Papel da tarefa do painel, só leitura:**
-   - Logs Insights nos grupos `/ecs/maria-langgraph-pp/api` e `/ecs/maria-langgraph-pp-release/api`: `logs:StartQuery`, `logs:GetQueryResults`, `logs:StopQuery` e `logs:DescribeLogGroups`;
+   - Logs Insights nos grupos `/ecs/maria-langgraph-pp/api` (em `us-east-1`) e `/ecs/maria-langgraph-pp-release-sp/api` (em `sa-east-1`): `logs:StartQuery`, `logs:GetQueryResults`, `logs:StopQuery` e `logs:DescribeLogGroups`;
    - métricas: `cloudwatch:GetMetricData` e `cloudwatch:ListMetrics` (`AWS/ApplicationELB`, `AWS/ECS`, `ECS/ContainerInsights`, `AWS/Bedrock` e, para a tela Infra, `AWS/CloudFront`, `AWS/RDS`, `AWS/NATGateway` e `AWS/Lambda`); o `GetMetricData` exige `"Resource": "*"`;
    - alertas (quadro "Alertas" da Agora): `cloudwatch:DescribeAlarms` e `cloudwatch:DescribeAlarmHistory`, nos alarmes `visor-maria-*` de `infra/alertas`;
    - opcionais: `pricing:GetProducts`, para conferir preço, e `rds:DescribeDBInstances`, para o rateio do stack antigo.

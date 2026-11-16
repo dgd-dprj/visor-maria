@@ -2,6 +2,25 @@
 
 Cada decisão com a data, quem decidiu, o motivo e o que ela custa.
 
+## 2026-11-16: o release é lido em São Paulo
+
+**Decisão (Nicole).** O release da Maria passou para `sa-east-1` em 16/11 e o da
+Virgínia foi desligado (maria-langgraph-pp, `docs/infra-sa-east-1.md`, #463 e
+#500). O Visor lê cada ambiente na região dele (`fontes.REGIAO`): produção na
+Virgínia, release em São Paulo, com os nomes terminados em `-sp` (grupo de logs,
+cluster, serviço, target group, banco, NAT) e o modelo Qwen. O CloudFront, a
+Lambda do e-mail, os alarmes de `infra/alertas` e o gasto de IA da tela
+financeira continuam lidos na Virgínia.
+
+**Por quê.** Com o grupo de logs do release apagado na Virgínia, toda leitura do
+release voltava recusada, não ficava no cache e era refeita a cada troca de
+tela: a credencial do release levava cerca de 60 s por tela.
+
+**O que custa.** Os 30 dias de logs do release na Virgínia saíram junto com o
+grupo: o histórico do release começa em 11/11, quando o de São Paulo foi criado.
+O Terraform de `infra/alertas` (ainda não aplicado) aponta o release da
+Virgínia, e o gasto do Qwen não entra na tela financeira.
+
 ## 2026-11-10: a regra 4 passa a ser "nunca identificar a conversa"
 
 **Decisão (Nicole).** Para entender os bugs, a tela Atendimento mostra uma linha
