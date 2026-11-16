@@ -86,10 +86,14 @@ from painel.dados.modelo import (
     TipoDeAlarme,
     TokensDoDia,
     TokensRegistrados,
+    TomDaIA,
     TrechoDeNaoEncontrado,
     UsoDaIA,
     ValidadeConferida,
+    VersaoDoTom,
 )
+from painel.dados.modelo import CasoDoTom as _CasoDoTom
+from painel.dados.modelo import NotaDoTom as _NotaDoTom
 
 MOTIVO_DA_FALHA_SIMULADA = "A fonte não respondeu a esta leitura (falha simulada)."
 
@@ -305,6 +309,47 @@ class FonteSimulada:
             fontes.fonte_alertas_de_codigo(),
             lambda agora: [AlertaDeCodigo("Informação sensível registrada no log", "media", "src/maria/integracoes/verde.py", 291, agora - timedelta(days=2))],
         )
+
+    def tom_da_ia(self) -> Leitura[TomDaIA]:
+        def gerar(agora: datetime) -> TomDaIA:
+            def versao(nome: str, acolhimento: int, curtas: int, palavras: float, emoji: int, custo: float) -> VersaoDoTom:
+                regras = (
+                    ("tem_acolhimento", acolhimento),
+                    ("ate_25_palavras", curtas),
+                    ("termina_em_pergunta", 60),
+                    ("oferece_as_alternativas", 60),
+                    ("sem_termo_tecnico", 60),
+                    ("sem_emoji_no_tema_sensivel", 60),
+                )
+                return VersaoDoTom(nome, 60, regras, palavras, emoji, custo)
+
+            amostra = (
+                _CasoDoTom(
+                    1,
+                    "Meu irmão foi preso e eu queria saber como está o processo dele.",
+                    True,
+                    (
+                        ("haiku", "Você quer saber onde seu irmão está preso ou as novidades do processo dele?"),
+                        ("qwen", "Você quer saber sobre a situação dele na prisão ou sobre o processo?"),
+                        ("qwen_tom", "Você quer saber como ele está na prisão ou como anda o processo dele?"),
+                    ),
+                ),
+                _CasoDoTom(
+                    19,
+                    "Não consigo entrar no aplicativo para ver meu horário marcado.",
+                    False,
+                    (
+                        ("haiku", "Você quer resolver o acesso ao app ou consultar o seu agendamento?"),
+                        ("qwen", "Você quer ajuda para acessar o aplicativo ou ver o atendimento agendado?"),
+                        ("qwen_tom", "Você está com dificuldade para entrar no app ou quer conferir seu horário? 😊"),
+                    ),
+                ),
+            )
+            notas = (_NotaDoTom(1, "qwen_tom", 5, 4, "equipe", agora - timedelta(hours=2)), _NotaDoTom(1, "haiku", 3, 3, "equipe", agora - timedelta(hours=2)))
+            versoes = (versao("haiku", 51, 34, 25.9, 0, 0.0821), versao("qwen", 54, 55, 19.3, 0, 0.0546), versao("qwen_tom", 59, 55, 18.8, 3, 0.0555))
+            return TomDaIA(agora - timedelta(hours=3), 0.1922, 30, 2, versoes, amostra, notas)
+
+        return self._ler(fontes.fonte_tom_da_ia(), gerar)
 
     def verde_por_dia(self, ambiente: Ambiente) -> Leitura[list[DiaDoVerde]]:
         def gerar(momento: datetime) -> list[DiaDoVerde]:

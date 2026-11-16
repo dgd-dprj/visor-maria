@@ -20,13 +20,14 @@ import plotly.graph_objects as go
 from dash import Input, Output, callback, html
 
 from painel.componentes import filtro_de_dia, graficos
-from painel.componentes.blocos import Pendencia, Valor, indicador, lista_de_fontes, quadro, reservado, texto_de_falha
+from painel.componentes.blocos import Pendencia, Valor, indicador, lista_de_fontes, quadro, reservado, selo, texto_de_falha
 from painel.componentes.cabecalho import cabecalho, filtro_de_ambiente
-from painel.componentes.formato import data_curta, numero, sem_hifen
-from painel.dados.modelo import FUSO, NOME_DO_AMBIENTE, Ambiente, DiaDoModelo, Estado
+from painel.componentes.formato import contagem, data_curta, data_e_hora_curta, dinheiro, numero, sem_hifen
+from painel.dados.modelo import FUSO, NOME_DO_AMBIENTE, REGRAS_DO_TOM, VERSOES_DO_TOM, Ambiente, DiaDoModelo, Estado, TomDaIA
 from painel.dados.telas import LeiturasDaIA, dias_passados, ler_ia, preparar
 from painel.funcoes_de_ia import FUNCOES
 from painel.lateral import coluna, com_lateral
+from painel.tom import CASOS_PARA_NOTA, endereco_das_notas
 
 dash.register_page(__name__, path="/ia", name="Observatório da IA", order=6, title="Observatório da IA · Visor Maria")
 
@@ -303,6 +304,135 @@ PENDENCIAS = reservado(
 )
 
 
+# ── Tom da IA (maria-langgraph-pp #508, visor-maria#12) ───────────────────
+
+
+def _decimal(valor: float) -> str:
+    return f"{valor:.1f}".replace(".", ",")
+
+
+def _regras_do_tom(tom: TomDaIA) -> html.Table:
+    versoes = [v for v in tom.versoes if v.versao in VERSOES_DO_TOM]
+    linhas = []
+    for regra, nome in REGRAS_DO_TOM.items():
+        valores = {v.versao: dict(v.regras).get(regra, 0) for v in versoes}
+        melhor = max(valores.values(), default=0)
+        linhas.append(
+            html.Tr(
+                [html.Th(nome, scope="row")]
+                + [
+                    html.Td(f"{numero(valores[v.versao])} de {numero(v.perguntas)}", className="numero" + (" tom-bom" if valores[v.versao] == melhor else ""))
+                    for v in versoes
+                ]
+            )
+        )
+    linhas.append(html.Tr([html.Th("palavras em média", scope="row")] + [html.Td(_decimal(v.palavras_em_media), className="numero") for v in versoes]))
+    linhas.append(html.Tr([html.Th("com emoji", scope="row")] + [html.Td(numero(v.com_emoji), className="numero") for v in versoes]))
+    linhas.append(html.Tr([html.Th("gasto da versão", scope="row")] + [html.Td(dinheiro(v.custo, 4), className="numero") for v in versoes]))
+    return html.Table(
+        [html.Thead(html.Tr([html.Th("Regra")] + [html.Th(VERSOES_DO_TOM[v.versao], className="numero") for v in versoes])), html.Tbody(linhas)],
+        className="tabela",
+    )
+
+
+def _notas_do_tom(tom: TomDaIA) -> html.Div:
+    pessoas = len({n.por for n in tom.notas})
+    pecas: list[Any] = [html.H3("Notas da equipe", className="subtitulo")]
+    if not tom.notas:
+        pecas.append(html.P("Ainda sem nota da equipe. A nota é cega: a pergunta vai sem dizer de que modelo é.", className="texto-vazio"))
+    else:
+        linhas = []
+        for versao in ("haiku", "qwen_tom"):
+            dela = [n for n in tom.notas if n.versao == versao]
+            if not dela:
+                continue
+            acolhedor = sum(n.acolhedor for n in dela) / len(dela)
+            simples = sum(n.simples for n in dela) / len(dela)
+            linhas.append(
+                html.Tr(
+                    [
+                        html.Th(VERSOES_DO_TOM[versao], scope="row"),
+                        html.Td(_decimal(acolhedor), className="numero"),
+                        html.Td(_decimal(simples), className="numero"),
+                        html.Td(numero(len(dela)), className="numero"),
+                    ]
+                )
+            )
+        pecas.append(
+            html.Table(
+                [
+                    html.Thead(
+                        html.Tr(
+                            [
+                                html.Th("Versão"),
+                                html.Th("acolhedor, de 1 a 5", className="numero"),
+                                html.Th("simples, de 1 a 5", className="numero"),
+                                html.Th("notas", className="numero"),
+                            ]
+                        )
+                    ),
+                    html.Tbody(linhas),
+                ],
+                className="tabela",
+            )
+        )
+        pecas.append(html.P(f"{contagem(pessoas, 'pessoa deu nota', 'pessoas deram nota')}.", className="texto-detalhe"))
+    pecas.append(
+        html.A(
+            f"Dar notas ({len(CASOS_PARA_NOTA)} relatos, abre no GitHub)",
+            href=endereco_das_notas(tom.amostra, tom.rodado_em),
+            target="_blank",
+            rel="noopener",
+            className="botao",
+        )
+    )
+    return html.Div(pecas)
+
+
+def _amostra_do_tom(tom: TomDaIA) -> html.Details:
+    linhas = [
+        html.Tr(
+            [
+                html.Td(numero(c.caso), className="numero"),
+                html.Td([sem_hifen(c.exemplo), " ", selo("tema sensível", "atencao") if c.sensivel else ""]),
+                *[html.Td(sem_hifen(dict(c.perguntas).get(v, ""))) for v in VERSOES_DO_TOM],
+            ]
+        )
+        for c in tom.amostra
+    ]
+    return html.Details(
+        [
+            html.Summary(f"Amostra lado a lado: as {numero(len(tom.amostra))} perguntas da 1ª passada"),
+            html.Table(
+                [
+                    html.Thead(html.Tr([html.Th("Caso", className="numero"), html.Th("Relato inventado")] + [html.Th(n) for n in VERSOES_DO_TOM.values()])),
+                    html.Tbody(linhas),
+                ],
+                className="tabela",
+            ),
+        ],
+        className="detalhes",
+    )
+
+
+def _tom(d: LeiturasDaIA) -> html.Section:
+    leitura = d.tom
+    titulo = "Tom da IA"
+    lateral = "a pergunta de desambiguação; a comparação mais nova, que não muda com o dia"
+    if leitura.estado is Estado.INDISPONIVEL:
+        return quadro(titulo, texto_de_falha(leitura), [leitura], d.agora, lateral=lateral)
+    tom = leitura.valor
+    if tom is None:
+        return quadro(titulo, html.P("A comparação de tom ainda não rodou.", className="texto-vazio"), [leitura], d.agora, lateral=lateral)
+    introducao = html.P(
+        f"{numero(tom.relatos)} relatos inventados, 3 versões e {numero(tom.passadas)} passadas, rodada em {data_e_hora_curta(tom.rodado_em)}. "
+        f"Gasto: {dinheiro(tom.custo, 4)}, no preço do Haiku, o teto seguro. Emoji só fora dos temas sensíveis (decisão da Nicole, 16/11).",
+        className="texto-detalhe",
+    )
+    corpo = html.Div([introducao, _regras_do_tom(tom), _notas_do_tom(tom), _amostra_do_tom(tom)], className="miolo")
+    return quadro(titulo, corpo, [leitura], d.agora, lateral=lateral)
+
+
 # ── Montagem ──────────────────────────────────────────────────────────────
 
 
@@ -311,6 +441,7 @@ def _corpo(d: LeiturasDaIA, tema: str | None) -> list[Any]:
         _indicadores(d),
         _funcoes(d),
         _modelo(d, tema),
+        _tom(d),
         html.Div([_mudancas(d), APRENDE], className="grade-dupla"),
         PENDENCIAS,
         lista_de_fontes(d.todas(), d.agora),
@@ -351,7 +482,8 @@ def _lateral(d: LeiturasDaIA) -> list[Any]:
 
 
 FILTRADO = "As falhas, as perguntas escritas pela IA, os números do modelo e as mudanças no código mostram esse dia."
-filtro_de_dia.registrar("ia", FILTRADO)
+DE_AGORA = "O Tom da IA continua sendo a comparação mais nova."
+filtro_de_dia.registrar("ia", FILTRADO, DE_AGORA)
 
 
 def layout(dia: str | None = None, **_: str) -> html.Div:

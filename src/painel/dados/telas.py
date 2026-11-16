@@ -67,6 +67,7 @@ from painel.dados.modelo import (
     TempoDeResposta,
     TokensDoDia,
     TokensRegistrados,
+    TomDaIA,
     TrechoDeNaoEncontrado,
     UsoDaIA,
     juntar,
@@ -461,6 +462,9 @@ class LeiturasDaAplicacao:
     registrados: dict[Ambiente, Leitura[list[TokensRegistrados]]]
     # Como os atendimentos do ambiente terminaram, nos 30 dias que o registro guarda.
     encaminhamentos: Leitura[list[EncaminhamentoNoDia]]
+    # O gasto fora do atendimento (16/11): as avaliações de IA (#508) e as rodadas do QA da staging.
+    tom: Leitura[TomDaIA] | None = None
+    qa: Leitura[QA] | None = None
 
     def gasto(self, primeiro: date, ultimo: date) -> Leitura[GastoDeIA]:
         trecho = gasto.Trecho(primeiro, ultimo)
@@ -483,6 +487,7 @@ class LeiturasDaAplicacao:
 
     def todas(self) -> list[Leitura[Any]]:
         leituras: list[Leitura[Any]] = [*self.dias.values(), *self.meses, *self.registrados.values(), self.encaminhamentos]
+        leituras += [leitura for leitura in (self.tom, self.qa) if leitura is not None]
         return [*leituras, self.assuntos] if self.assuntos is not None else leituras
 
 
@@ -522,6 +527,7 @@ def ler_aplicacao(periodo: Periodo, ambiente: Ambiente) -> LeiturasDaAplicacao:
         por_assunto = [ler_ja(partial(fonte.gasto_por_assunto, ambiente, d)) for d in periodo.dias]
     dias = {d: ler_ja(partial(fonte.gasto_do_dia, d)) for d in sorted(precisa)}
     por_mes = [ler_ja(partial(fonte.gasto_do_mes, m)) for m in meses]
+    tom, qa = ler_ja(fonte.tom_da_ia), ler_ja(fonte.qa)
     return LeiturasDaAplicacao(
         agora=periodo.agora,
         periodo=periodo,
@@ -531,6 +537,8 @@ def ler_aplicacao(periodo: Periodo, ambiente: Ambiente) -> LeiturasDaAplicacao:
         assuntos=juntar([f.result() for f in por_assunto], _somar_assuntos) if por_assunto is not None else None,
         registrados={a: f.result() for a, f in registrados.items()},
         encaminhamentos=encaminhamentos.result(),
+        tom=tom.result(),
+        qa=qa.result(),
     )
 
 
@@ -589,16 +597,18 @@ class LeiturasDaIA:
     uso: Leitura[UsoDaIA]
     modelo: Leitura[list[DiaDoModelo]]
     mudancas: Leitura[list[MudancaNaIA]]
+    # A comparação de tom mais nova (#508): não muda com o dia nem com o ambiente.
+    tom: Leitura[TomDaIA]
 
     def todas(self) -> list[Leitura[Any]]:
-        return [self.erros, self.uso, self.modelo, self.mudancas]
+        return [self.erros, self.uso, self.modelo, self.mudancas, self.tom]
 
 
 def ler_ia(ambiente: Ambiente, dia: date | None = None) -> LeiturasDaIA:
     fonte = obter_fonte()
     erros, uso = ler_ja(partial(fonte.erros_da_ia, ambiente, dia)), ler_ja(partial(fonte.uso_da_ia, ambiente, dia))
-    modelo, mudancas = ler_ja(fonte.saude_do_modelo), ler_ja(fonte.mudancas_na_ia)
-    return LeiturasDaIA(datetime.now(FUSO), ambiente, dia, erros.result(), uso.result(), modelo.result(), mudancas.result())
+    modelo, mudancas, tom = ler_ja(fonte.saude_do_modelo), ler_ja(fonte.mudancas_na_ia), ler_ja(fonte.tom_da_ia)
+    return LeiturasDaIA(datetime.now(FUSO), ambiente, dia, erros.result(), uso.result(), modelo.result(), mudancas.result(), tom.result())
 
 
 @dataclass(frozen=True)

@@ -145,4 +145,6 @@ CONSULTAS: dict[str, Consulta] = {
     # e a fonte real guarda o que já leu de cada um; a lista de rodadas é relida a cada 5 minutos.
     "qa": Consulta("as rodadas de QA desde 13/11", CINCO_MINUTOS),
     "alertas_de_codigo": Consulta("os alertas do CodeQL abertos agora", QUINZE_MINUTOS),
+    # A comparação de tom muda só quando roda de novo; as notas chegam aos poucos.
+    "tom_da_ia": Consulta("a comparação de tom mais nova (#508) e as notas da equipe", CINCO_MINUTOS),
 }

@@ -62,6 +62,7 @@ from painel.dados.modelo import (
     TempoDeResposta,
     TokensDoDia,
     TokensRegistrados,
+    TomDaIA,
     TrechoDeNaoEncontrado,
     UsoDaIA,
 )
@@ -559,6 +560,23 @@ def fonte_alertas_de_codigo() -> Fonte:
     )
 
 
+# O resultado da comparação de tom é publicado como comentário na #508, com o bloco de dados marcado.
+ISSUE_DO_TOM = 508
+MARCA_DO_TOM = "<!-- visor:tom-da-ia -->"
+
+
+def fonte_tom_da_ia() -> Fonte:
+    return Fonte(
+        curto="GitHub",
+        nome="Comparação do tom da pergunta de desambiguação (Haiku e Qwen) e as notas da equipe",
+        identificador=(
+            f'dgd-dprj/maria-langgraph-pp: comentário mais novo da #{ISSUE_DO_TOM} com "{MARCA_DO_TOM}" '
+            '(scripts/avaliacao/tom_desambiguacao.py); issues com título "[nota de tom]"'
+        ),
+        atraso="minutos",
+    )
+
+
 class FonteDeDados(Protocol):
     """As consultas com `dia` leem, com ele, aquele dia de Brasília, de 0h a 24h
     (ou até agora, se for hoje), em vez da janela padrão. É o filtro de dia das
@@ -672,3 +690,6 @@ class FonteDeDados(Protocol):
     def qa(self) -> Leitura[QA]: ...
 
     def alertas_de_codigo(self) -> Leitura[list[AlertaDeCodigo]]: ...
+
+    # Observatório da IA e Relatório da Aplicação: a comparação de tom mais nova e as notas da equipe
+    def tom_da_ia(self) -> Leitura[TomDaIA]: ...

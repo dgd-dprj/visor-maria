@@ -2,6 +2,31 @@
 
 Cada decisão com a data, quem decidiu, o motivo e o que ela custa.
 
+## 2026-11-16: o tom da IA no Observatório e o gasto fora do atendimento
+
+**Decisão (Nicole).** A comparação do tom da pergunta de desambiguação (Haiku, Qwen sem
+o tom e Qwen com o tom; maria-langgraph-pp #508) aparece no Observatório da IA, no quadro
+"Tom da IA" (visor-maria#12). O quadro mostra as regras automáticas por versão, as
+palavras em média, o emoji, o gasto de cada versão, as notas da equipe e a amostra lado
+a lado. O gasto da comparação e o do QA da staging também aparecem no Relatório da
+Aplicação, no quadro "Gasto fora do atendimento", sem o detalhe, que fica nas outras
+duas telas.
+
+- **Fonte:** o comentário mais novo da #508 com a marca `<!-- visor:tom-da-ia -->`, um
+  bloco JSON que o `scripts/avaliacao/tom_desambiguacao.py` produz. O Visor lê o
+  comentário, e não o arquivo do repositório, para mostrar a comparação antes do merge.
+- **A nota humana é cega e o Visor continua só lendo.** O botão "Dar notas" abre no
+  GitHub uma issue já preenchida (`[nota de tom]`) com 8 relatos. Cada pergunta vai com
+  um código (`c3-1`, `c3-2`), sem o nome do modelo, e a ordem troca a cada caso. O
+  Visor lê as notas dessas issues. Entram só a produção de hoje e a proposta da #508.
+- **Tela financeira:** sem nome de modelo nos rótulos (regra da tela). A parte do Haiku
+  da comparação fica dentro do gasto de produção que a tela mede, e o texto explica isso.
+
+**O que custa.** Nada na AWS. No GitHub, duas leituras a cada 5 minutos com a tela
+aberta: os comentários da #508 e a lista de issues. O link "Dar notas" tem cerca de 6 mil
+caracteres, abaixo do limite do GitHub; por isso o relato vai só na primeira linha de
+cada caso.
+
 ## 2026-11-16: a tela QA
 
 **Decisão (Nicole).** O QA da Maria entra no Visor numa tela própria (`/qa`,

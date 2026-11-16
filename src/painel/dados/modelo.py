@@ -1047,6 +1047,66 @@ class AlertaDeCodigo:
     desde: datetime
 
 
+# ── Tom da IA (maria-langgraph-pp #508) ───────────────────────────────────
+
+# As versões da comparação, na ordem da tela.
+VERSOES_DO_TOM = {"haiku": "Haiku (produção)", "qwen": "Qwen, sem o tom", "qwen_tom": "Qwen com o tom"}
+REGRAS_DO_TOM = {
+    "tem_acolhimento": "tem acolhimento",
+    "ate_25_palavras": "até 25 palavras",
+    "termina_em_pergunta": "termina em pergunta",
+    "oferece_as_alternativas": "oferece as alternativas",
+    "sem_termo_tecnico": "sem termo técnico",
+    "sem_emoji_no_tema_sensivel": "sem emoji no tema sensível",
+}
+
+
+@dataclass(frozen=True)
+class VersaoDoTom:
+    """Uma versão da comparação: quantas perguntas passaram em cada regra automática."""
+
+    versao: str
+    perguntas: int
+    regras: tuple[tuple[str, int], ...]
+    palavras_em_media: float
+    com_emoji: int
+    custo: float
+
+
+@dataclass(frozen=True)
+class CasoDoTom:
+    """Um relato inventado da comparação e a pergunta de cada versão (`perguntas`: versão e pergunta).
+    `exemplo` é o relato inventado: nenhum é de atendimento real."""
+
+    caso: int
+    exemplo: str
+    sensivel: bool
+    perguntas: tuple[tuple[str, str], ...]
+
+
+@dataclass(frozen=True)
+class NotaDoTom:
+    """A nota de uma pessoa da equipe para uma pergunta, de 1 a 5, sem saber de que versão ela era."""
+
+    caso: int
+    versao: str
+    acolhedor: int
+    simples: int
+    por: str
+    em: datetime
+
+
+@dataclass(frozen=True)
+class TomDaIA:
+    rodado_em: datetime
+    custo: float
+    relatos: int
+    passadas: int
+    versoes: tuple[VersaoDoTom, ...]
+    amostra: tuple[CasoDoTom, ...]
+    notas: tuple[NotaDoTom, ...] = ()
+
+
 def juntar[T, R](leituras: Sequence[Leitura[T]], combinar: Callable[[list[T]], R]) -> Leitura[R]:
     """Uma leitura feita de várias (os dias de um mês, por exemplo).
 

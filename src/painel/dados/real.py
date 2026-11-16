@@ -106,12 +106,14 @@ from painel.dados.modelo import (
     TempoDeResposta,
     TokensDoDia,
     TokensRegistrados,
+    TomDaIA,
     TrechoDeNaoEncontrado,
     UsoDaIA,
     ValidadeConferida,
     alarme_do_nome,
     destino_do_log,
 )
+from painel.tom import TITULO_DAS_NOTAS, ler_comentario_do_tom, ler_notas
 
 registro = logging.getLogger(__name__)
 
@@ -848,6 +850,24 @@ class FonteReal:
             return resultado
 
         return self._ler(fontes.fonte_alertas_de_codigo(), gerar)
+
+    def tom_da_ia(self) -> Leitura[TomDaIA]:
+        def gerar(_: datetime) -> TomDaIA | None:
+            comentarios: list[dict[str, Any]] = self._github.json(f"issues/{fontes.ISSUE_DO_TOM}/comments", {"per_page": 100})
+            do_tom = [c for c in comentarios if fontes.MARCA_DO_TOM in (c.get("body") or "")]
+            if not do_tom:
+                return None
+            tom = ler_comentario_do_tom(do_tom[-1]["body"])
+            issues: list[dict[str, Any]] = self._github.json("issues", {"state": "all", "per_page": 100, "sort": "created", "direction": "desc"})
+            notas = [
+                nota
+                for issue in issues
+                if str(issue.get("title", "")).startswith(TITULO_DAS_NOTAS) and "pull_request" not in issue
+                for nota in ler_notas(issue.get("body") or "", (issue.get("user") or {}).get("login", ""), _hora_do_github(issue["created_at"]))
+            ]
+            return replace(tom, notas=tuple(notas))
+
+        return self._ler(fontes.fonte_tom_da_ia(), gerar)
 
     # ── Verde ─────────────────────────────────────────────────────────────
 
