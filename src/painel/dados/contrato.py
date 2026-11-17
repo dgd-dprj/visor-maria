@@ -39,6 +39,21 @@ EVENTOS: dict[str, frozenset[str]] = {
     "whatsapp_envio_erro": frozenset(),
     "whatsapp_bridge_erro": frozenset({"status"}),
     "whatsapp_status_entrega": frozenset({"status", "erroCodigo"}),
+    # O tom da pergunta de desambiguação, só em números (maria-langgraph-pp #508; Observatório da IA, visor-maria#12).
+    "desambiguacao_tom": frozenset(
+        {
+            "modelo",
+            "palavras",
+            "ateLimiteDePalavras",
+            "terminaEmPergunta",
+            "semTermoTecnico",
+            "ofereceAlternativas",
+            "temAcolhimento",
+            "comEmoji",
+            "emojiTirado",
+            "temaSensivel",
+        }
+    ),
 }
 
 # Campos que chegam por fora do `evento=` e que o retrato do código não enxerga:
@@ -87,4 +102,6 @@ FORA_DOS_LOGS_DE_REFERENCIA: dict[str, frozenset[str]] = {
     "whatsapp_envio_erro": frozenset({"*"}),
     "whatsapp_bridge_erro": frozenset({"*"}),
     "whatsapp_status_entrega": frozenset({"erroCodigo"}),
+    # Evento novo de 17/11 (#508): nenhum log de referência o tem.
+    "desambiguacao_tom": frozenset({"*"}),
 }

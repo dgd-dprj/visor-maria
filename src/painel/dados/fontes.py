@@ -63,6 +63,7 @@ from painel.dados.modelo import (
     TokensDoDia,
     TokensRegistrados,
     TomDaIA,
+    TomNaProducao,
     TrechoDeNaoEncontrado,
     UsoDaIA,
 )
@@ -577,6 +578,25 @@ def fonte_tom_da_ia() -> Fonte:
     )
 
 
+# O tom de verdade (17/11): onde a Maria registra o evento desambiguacao_tom. A produção nova, em São Paulo
+# (#509), ainda não está nos ambientes do Visor: entra aqui pelo grupo dela, até o corte.
+GRUPO_PRODUCAO_SP = "/ecs/maria-langgraph-pp-prod-sp/api"
+ONDE_O_TOM_E_LIDO: tuple[tuple[str, str, str], ...] = (
+    ("Produção", REGIAO[Ambiente.PRODUCAO], GRUPO_DE_LOGS[Ambiente.PRODUCAO]),
+    ("Produção em São Paulo", "sa-east-1", GRUPO_PRODUCAO_SP),
+    ("Release", REGIAO[Ambiente.RELEASE], GRUPO_DE_LOGS[Ambiente.RELEASE]),
+)
+
+
+def fonte_tom_na_producao() -> Fonte:
+    return Fonte(
+        curto="logs de produção e do release",
+        nome="Tom das perguntas de desambiguação de verdade, nos últimos 30 dias (só números, sem texto)",
+        identificador=", ".join(grupo for _, _, grupo in ONDE_O_TOM_E_LIDO) + ", evento desambiguacao_tom",
+        atraso="segundos",
+    )
+
+
 class FonteDeDados(Protocol):
     """As consultas com `dia` leem, com ele, aquele dia de Brasília, de 0h a 24h
     (ou até agora, se for hoje), em vez da janela padrão. É o filtro de dia das
@@ -693,3 +713,6 @@ class FonteDeDados(Protocol):
 
     # Observatório da IA e Relatório da Aplicação: a comparação de tom mais nova e as notas da equipe
     def tom_da_ia(self) -> Leitura[TomDaIA]: ...
+
+    # O tom das perguntas de verdade, nos 30 dias de logs, por lugar e modelo
+    def tom_na_producao(self) -> Leitura[list[TomNaProducao]]: ...

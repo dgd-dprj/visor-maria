@@ -87,6 +87,7 @@ from painel.dados.modelo import (
     TokensDoDia,
     TokensRegistrados,
     TomDaIA,
+    TomNaProducao,
     TrechoDeNaoEncontrado,
     UsoDaIA,
     ValidadeConferida,
@@ -350,6 +351,15 @@ class FonteSimulada:
             return TomDaIA(agora - timedelta(hours=3), 0.1922, 30, 2, versoes, amostra, notas)
 
         return self._ler(fontes.fonte_tom_da_ia(), gerar)
+
+    def tom_na_producao(self) -> Leitura[list[TomNaProducao]]:
+        return self._ler(
+            fontes.fonte_tom_na_producao(),
+            lambda _: [
+                TomNaProducao("Produção", "us.anthropic.claude-haiku-4-5-20251001-v1:0", 42, 35, 24, 42, 41, 42, 0, 0, 17, 24.8),
+                TomNaProducao("Release", "qwen.qwen3-vl-235b-a22b", 9, 9, 8, 9, 9, 9, 1, 0, 4, 18.1),
+            ],
+        )
 
     def verde_por_dia(self, ambiente: Ambiente) -> Leitura[list[DiaDoVerde]]:
         def gerar(momento: datetime) -> list[DiaDoVerde]:

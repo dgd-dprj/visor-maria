@@ -1097,6 +1097,25 @@ class NotaDoTom:
 
 
 @dataclass(frozen=True)
+class TomNaProducao:
+    """O tom das perguntas de desambiguação que a Maria mandou de verdade, por lugar e modelo. Só contagens:
+    a Maria registra os números de cada pergunta (evento desambiguacao_tom), nunca o texto nem o relato."""
+
+    onde: str
+    modelo: str
+    perguntas: int
+    acolhimento: int
+    curtas: int
+    termina: int
+    alternativas: int
+    sem_tecnico: int
+    com_emoji: int
+    emoji_tirado: int
+    sensiveis: int
+    palavras_em_media: float
+
+
+@dataclass(frozen=True)
 class TomDaIA:
     rodado_em: datetime
     custo: float

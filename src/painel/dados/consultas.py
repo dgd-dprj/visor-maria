@@ -147,4 +147,6 @@ CONSULTAS: dict[str, Consulta] = {
     "alertas_de_codigo": Consulta("os alertas do CodeQL abertos agora", QUINZE_MINUTOS),
     # A comparação de tom muda só quando roda de novo; as notas chegam aos poucos.
     "tom_da_ia": Consulta("a comparação de tom mais nova (#508) e as notas da equipe", CINCO_MINUTOS),
+    # Três grupos de logs (produção, produção em São Paulo e release), 30 dias, relidos a cada 15 minutos.
+    "tom_na_producao": Consulta("os 30 dias de logs, nos três lugares onde a Maria roda", QUINZE_MINUTOS),
 }

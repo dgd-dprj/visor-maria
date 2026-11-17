@@ -1,9 +1,9 @@
 {
   "origem": {
     "repositorio": "dgd-dprj/maria-langgraph-pp",
-    "branch": "develop",
-    "commit": "2cac5f0b1783cca9246511f1911a27d333caef12",
-    "extraido_em": "2026-11-10"
+    "branch": "feat/508-tom-qwen",
+    "commit": "705325d34906b2964289af2dae93a44484ea6ad6",
+    "extraido_em": "2026-11-17"
   },
   "eventos": {
     "assunto_guardado_aberto": [
@@ -15,6 +15,13 @@
       "destino",
       "status",
       "tipoCaso"
+    ],
+    "assunto_guardado_retomado": [
+      "chatId"
+    ],
+    "assuntos_em_aberto_listados": [
+      "chatId",
+      "quantos"
     ],
     "atendimento_criado": [
       "chatId",
@@ -30,11 +37,32 @@
       "fluxoId",
       "motivoHandoff",
       "status",
+      "statusFinal",
       "tokensGastos"
     ],
     "atendimento_sem_checkpoint": [
       "chatId",
       "fluxoId"
+    ],
+    "conversa_encerrada": [
+      "chatId",
+      "emAberto"
+    ],
+    "cpf_digito_invalido": [
+      "tentativa"
+    ],
+    "desambiguacao_tom": [
+      "ateLimiteDePalavras",
+      "comEmoji",
+      "emojiTirado",
+      "modelo",
+      "ofereceAlternativas",
+      "palavras",
+      "semEmojiNoTemaSensivel",
+      "semTermoTecnico",
+      "temAcolhimento",
+      "temaSensivel",
+      "terminaEmPergunta"
     ],
     "email_nudecon_enviado": [
       "anexosFalhos",
@@ -89,6 +117,10 @@
       "tipoCaso",
       "tokensGastosTotal"
     ],
+    "parentesco_fora_da_lista": [
+      "motivo"
+    ],
+    "parentesco_sem_ia": [],
     "pergunta_enviada": [
       "chatId",
       "fluxoId",

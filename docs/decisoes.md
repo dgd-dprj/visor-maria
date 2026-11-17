@@ -2,6 +2,24 @@
 
 Cada decisão com a data, quem decidiu, o motivo e o que ela custa.
 
+## 2026-11-17: o tom das conversas de verdade, só em números
+
+**Decisão (Nicole).** O quadro "Tom da IA" mostra primeiro as métricas das perguntas de
+desambiguação **de verdade**, e a comparação com relatos inventados fica recolhida, como
+teste. "Não faz sentido o painel com tudo fictício." Não é trazer os dados das pessoas: a
+Maria mede o tom de cada pergunta na hora (maria-langgraph-pp #508, `maria.ia.tom`) e
+registra **só os números** no evento `desambiguacao_tom`, nunca a pergunta nem o relato.
+
+- **Onde lê:** a produção (Virgínia), a produção nova em São Paulo (`/ecs/maria-langgraph-pp-prod-sp/api`,
+  #509, até o corte) e o release, nos 30 dias de logs, por modelo.
+- **Quando aparecem números:** depois que a #508 entrar. No release, depois da promoção para a staging; na
+  produção, depois do corte para São Paulo (a Virgínia não recebe mais versão nova). Até lá, o quadro diz isso.
+- **Contrato:** o evento entra em `dados/contrato.py`. O retrato do código foi tirado da branch da #508; este
+  trabalho só pode ir para a `visor-maria` depois que a #508 estiver na `develop` da Maria, senão o job diário
+  `contrato` falha.
+
+**O que custa.** Três consultas ao Logs Insights a cada 15 minutos com a tela aberta, só no evento do tom.
+
 ## 2026-11-16: o tom da IA no Observatório e o gasto fora do atendimento
 
 **Decisão (Nicole).** A comparação do tom da pergunta de desambiguação (Haiku, Qwen sem

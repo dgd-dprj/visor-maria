@@ -23,7 +23,18 @@ from painel.componentes import filtro_de_dia, graficos
 from painel.componentes.blocos import Pendencia, Valor, indicador, lista_de_fontes, quadro, reservado, selo, texto_de_falha
 from painel.componentes.cabecalho import cabecalho, filtro_de_ambiente
 from painel.componentes.formato import contagem, data_curta, data_e_hora_curta, dinheiro, numero, sem_hifen
-from painel.dados.modelo import FUSO, NOME_DO_AMBIENTE, REGRAS_DO_TOM, VERSOES_DO_TOM, Ambiente, DiaDoModelo, Estado, TomDaIA
+from painel.dados.modelo import (
+    FUSO,
+    NOME_DO_AMBIENTE,
+    REGRAS_DO_TOM,
+    VERSOES_DO_TOM,
+    Ambiente,
+    DiaDoModelo,
+    Estado,
+    Leitura,
+    TomDaIA,
+    TomNaProducao,
+)
 from painel.dados.telas import LeiturasDaIA, dias_passados, ler_ia, preparar
 from painel.funcoes_de_ia import FUNCOES
 from painel.lateral import coluna, com_lateral
@@ -415,22 +426,105 @@ def _amostra_do_tom(tom: TomDaIA) -> html.Details:
     )
 
 
-def _tom(d: LeiturasDaIA) -> html.Section:
-    leitura = d.tom
-    titulo = "Tom da IA"
-    lateral = "a pergunta de desambiguação; a comparação mais nova, que não muda com o dia"
+def _nome_do_modelo(modelo: str) -> str:
+    if "haiku" in modelo:
+        return "Haiku"
+    if modelo.startswith("qwen"):
+        return "Qwen"
+    if "ministral" in modelo:
+        return "Ministral"
+    return "outro modelo"
+
+
+def _parte(n: int, total: int) -> str:
+    return f"{round(100 * n / total)}%" if total else "nenhuma"
+
+
+def _tom_de_verdade(leitura: Leitura[list[TomNaProducao]]) -> html.Div:
+    """Os números das perguntas que a Maria mandou de verdade (17/11): só contagens, nunca o texto."""
+    pecas: list[Any] = [html.H3("Nas conversas de verdade, últimos 30 dias", className="subtitulo")]
     if leitura.estado is Estado.INDISPONIVEL:
-        return quadro(titulo, texto_de_falha(leitura), [leitura], d.agora, lateral=lateral)
-    tom = leitura.valor
-    if tom is None:
-        return quadro(titulo, html.P("A comparação de tom ainda não rodou.", className="texto-vazio"), [leitura], d.agora, lateral=lateral)
-    introducao = html.P(
-        f"{numero(tom.relatos)} relatos inventados, 3 versões e {numero(tom.passadas)} passadas, rodada em {data_e_hora_curta(tom.rodado_em)}. "
-        f"Gasto: {dinheiro(tom.custo, 4)}, no preço do Haiku, o teto seguro. Emoji só fora dos temas sensíveis (decisão da Nicole, 16/11).",
-        className="texto-detalhe",
+        pecas.append(texto_de_falha(leitura))
+        return html.Div(pecas)
+    if not leitura.valor:
+        pecas.append(
+            html.P(
+                "A Maria ainda não registra o tom das perguntas de verdade. Começa quando a #508 entrar: no release, depois da "
+                "promoção para a staging; na produção, depois do corte para São Paulo. Os números vêm sem o texto da pergunta e sem o relato.",
+                className="texto-vazio",
+            )
+        )
+        return html.Div(pecas)
+    cabecalho_da_tabela = ["Onde", "Modelo", "Perguntas", "Acolhimento", "Até 25 palavras", "Termina em pergunta", "Oferece as opções"]
+    cabecalho_da_tabela += ["Sem termo técnico", "Com emoji", "Palavras em média"]
+    linhas = [
+        html.Tr(
+            [
+                html.Th(t.onde, scope="row"),
+                html.Td(_nome_do_modelo(t.modelo)),
+                html.Td(numero(t.perguntas), className="numero"),
+                html.Td(_parte(t.acolhimento, t.perguntas), className="numero"),
+                html.Td(_parte(t.curtas, t.perguntas), className="numero"),
+                html.Td(_parte(t.termina, t.perguntas), className="numero"),
+                html.Td(_parte(t.alternativas, t.perguntas), className="numero"),
+                html.Td(_parte(t.sem_tecnico, t.perguntas), className="numero"),
+                html.Td(
+                    numero(t.com_emoji) + (f" (tirado em {numero(t.emoji_tirado)} de tema sensível)" if t.emoji_tirado else ""),
+                    className="numero",
+                ),
+                html.Td(_decimal(t.palavras_em_media), className="numero"),
+            ]
+        )
+        for t in leitura.valor
+    ]
+    pecas.append(
+        html.Table(
+            [
+                html.Thead(html.Tr([html.Th(c, className="numero" if i > 1 else "") for i, c in enumerate(cabecalho_da_tabela)])),
+                html.Tbody(linhas),
+            ],
+            className="tabela",
+        )
     )
-    corpo = html.Div([introducao, _regras_do_tom(tom), _notas_do_tom(tom), _amostra_do_tom(tom)], className="miolo")
-    return quadro(titulo, corpo, [leitura], d.agora, lateral=lateral)
+    sensiveis = sum(t.sensiveis for t in leitura.valor)
+    pecas.append(
+        html.P(
+            f"{contagem(sensiveis, 'pergunta foi', 'perguntas foram')} sobre tema sensível (violência doméstica ou pessoa presa), "
+            "em que a pergunta sai sem emoji. As regras são as mesmas da comparação.",
+            className="texto-detalhe",
+        )
+    )
+    return html.Div(pecas)
+
+
+def _tom(d: LeiturasDaIA) -> html.Section:
+    leituras: list[Leitura[Any]] = [d.tom_na_producao, d.tom]
+    titulo = "Tom da IA"
+    lateral = "a pergunta de desambiguação; os 30 dias de logs e a comparação mais nova, que não mudam com o dia"
+    pecas: list[Any] = [_tom_de_verdade(d.tom_na_producao)]
+    leitura = d.tom
+    if leitura.estado is Estado.INDISPONIVEL:
+        pecas.append(texto_de_falha(leitura))
+    elif leitura.valor is not None:
+        tom = leitura.valor
+        introducao = html.P(
+            f"{numero(tom.relatos)} relatos inventados, 3 versões e {numero(tom.passadas)} passadas, rodada em {data_e_hora_curta(tom.rodado_em)}. "
+            f"Gasto: {dinheiro(tom.custo, 4)}, no preço do Haiku, o teto seguro. Emoji só fora dos temas sensíveis (decisão da Nicole, 16/11).",
+            className="texto-detalhe",
+        )
+        pecas.append(
+            html.Details(
+                [
+                    html.Summary(f"Teste com relatos inventados, de {data_curta(tom.rodado_em)}: Haiku e Qwen lado a lado, e as notas da equipe"),
+                    introducao,
+                    _regras_do_tom(tom),
+                    _notas_do_tom(tom),
+                    _amostra_do_tom(tom),
+                ],
+                className="detalhes",
+            )
+        )
+    return quadro(titulo, html.Div(pecas, className="miolo"), leituras, d.agora, lateral=lateral)
 
 
 # ── Montagem ──────────────────────────────────────────────────────────────

@@ -107,6 +107,7 @@ from painel.dados.modelo import (
     TokensDoDia,
     TokensRegistrados,
     TomDaIA,
+    TomNaProducao,
     TrechoDeNaoEncontrado,
     UsoDaIA,
     ValidadeConferida,
@@ -459,7 +460,11 @@ class FonteReal:
         if len(regioes) != 1:
             # O Logs Insights não junta grupos de regiões diferentes numa consulta.
             raise ValueError(f"consulta com grupos em mais de uma região: {grupos}")
-        logs = self._logs_em[regioes.pop()]
+        return self._consultar_em(regioes.pop(), grupos, inicio, fim, consulta, limite)
+
+    def _consultar_em(self, regiao: str, grupos: list[str], inicio: datetime, fim: datetime, consulta: str, limite: int = 1000) -> list[dict[str, str]]:
+        """A consulta ao Logs Insights em grupos de uma região, pelo nome do grupo (para quem não é um `Ambiente`)."""
+        logs = self._logs_em[regiao]
         inicio = max(inicio, self._agora() - timedelta(days=fontes.DIAS_DO_REGISTRO))
         if fim <= inicio:
             return []
@@ -868,6 +873,51 @@ class FonteReal:
             return replace(tom, notas=tuple(notas))
 
         return self._ler(fontes.fonte_tom_da_ia(), gerar)
+
+    def tom_na_producao(self) -> Leitura[list[TomNaProducao]]:
+        consulta = (
+            'filter evento = "desambiguacao_tom" | stats count(*) as perguntas, sum(temAcolhimento) as acolhimento,'
+            " sum(ateLimiteDePalavras) as curtas, sum(terminaEmPergunta) as termina, sum(ofereceAlternativas) as alternativas,"
+            " sum(semTermoTecnico) as sem_tecnico, sum(comEmoji) as com_emoji, sum(emojiTirado) as emoji_tirado,"
+            " sum(temaSensivel) as sensiveis, avg(palavras) as media_de_palavras by modelo"
+        )
+
+        def de_um_lugar(lugar: tuple[str, str, str], inicio: datetime, fim: datetime) -> list[TomNaProducao]:
+            onde, regiao, grupo = lugar
+            try:
+                linhas = self._consultar_em(regiao, [grupo], inicio, fim, consulta)
+            except ClientError as erro:
+                # O grupo da produção em São Paulo pode ainda não existir: o lugar fica de fora, sem derrubar os outros.
+                if "ResourceNotFound" in erro.response.get("Error", {}).get("Code", ""):
+                    return []
+                raise
+            return [
+                TomNaProducao(
+                    onde,
+                    linha.get("modelo", ""),
+                    _inteiro(linha, "perguntas"),
+                    _inteiro(linha, "acolhimento"),
+                    _inteiro(linha, "curtas"),
+                    _inteiro(linha, "termina"),
+                    _inteiro(linha, "alternativas"),
+                    _inteiro(linha, "sem_tecnico"),
+                    _inteiro(linha, "com_emoji"),
+                    _inteiro(linha, "emoji_tirado"),
+                    _inteiro(linha, "sensiveis"),
+                    round(_real(linha, "media_de_palavras"), 1),
+                )
+                for linha in linhas
+                if _inteiro(linha, "perguntas")
+            ]
+
+        def gerar(agora: datetime) -> list[TomNaProducao] | None:
+            inicio = agora - timedelta(days=fontes.DIAS_DO_REGISTRO)
+            with ThreadPoolExecutor(max_workers=len(fontes.ONDE_O_TOM_E_LIDO)) as grupo:
+                por_lugar = list(grupo.map(lambda lugar: de_um_lugar(lugar, inicio, agora), fontes.ONDE_O_TOM_E_LIDO))
+            todos = [t for lugar in por_lugar for t in lugar]
+            return todos or None
+
+        return self._ler(fontes.fonte_tom_na_producao(), gerar)
 
     # ── Verde ─────────────────────────────────────────────────────────────
 

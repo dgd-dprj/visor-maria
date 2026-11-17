@@ -68,6 +68,7 @@ from painel.dados.modelo import (
     TokensDoDia,
     TokensRegistrados,
     TomDaIA,
+    TomNaProducao,
     TrechoDeNaoEncontrado,
     UsoDaIA,
     juntar,
@@ -599,16 +600,29 @@ class LeiturasDaIA:
     mudancas: Leitura[list[MudancaNaIA]]
     # A comparação de tom mais nova (#508): não muda com o dia nem com o ambiente.
     tom: Leitura[TomDaIA]
+    # O tom das perguntas de verdade (17/11): os 30 dias de logs, nos três lugares onde a Maria roda.
+    tom_na_producao: Leitura[list[TomNaProducao]]
 
     def todas(self) -> list[Leitura[Any]]:
-        return [self.erros, self.uso, self.modelo, self.mudancas, self.tom]
+        return [self.erros, self.uso, self.modelo, self.mudancas, self.tom, self.tom_na_producao]
 
 
 def ler_ia(ambiente: Ambiente, dia: date | None = None) -> LeiturasDaIA:
     fonte = obter_fonte()
     erros, uso = ler_ja(partial(fonte.erros_da_ia, ambiente, dia)), ler_ja(partial(fonte.uso_da_ia, ambiente, dia))
     modelo, mudancas, tom = ler_ja(fonte.saude_do_modelo), ler_ja(fonte.mudancas_na_ia), ler_ja(fonte.tom_da_ia)
-    return LeiturasDaIA(datetime.now(FUSO), ambiente, dia, erros.result(), uso.result(), modelo.result(), mudancas.result(), tom.result())
+    tom_na_producao = ler_ja(fonte.tom_na_producao)
+    return LeiturasDaIA(
+        datetime.now(FUSO),
+        ambiente,
+        dia,
+        erros.result(),
+        uso.result(),
+        modelo.result(),
+        mudancas.result(),
+        tom.result(),
+        tom_na_producao.result(),
+    )
 
 
 @dataclass(frozen=True)
