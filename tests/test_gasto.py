@@ -198,9 +198,15 @@ def test_toda_tela_tem_a_coluna_da_direita(layout_da_tela: Callable[[str], Any])
 
     for nome, _, _ in TELAS:
         layout = layout_da_tela(nome)
-        if nome == "Agora":
-            # A Agora usa a largura toda (28/10): os gráficos de hora em hora pedem espaço.
+        if nome in ("Agora", "Infra", "QA"):
+            # A Agora (28/10) e a Infra (10/11) usam a largura toda: os gráficos de hora em hora pedem espaço.
+            # O QA (16/11) também: as tabelas de defeitos e de rodadas pedem espaço.
             assert "tela-larga" in str(_props(layout).get("className") or ""), nome
+            continue
+        if nome == "Credencial do Verde":
+            # Os gráficos da Credencial ficam no fim da tela, na largura inteira (09/11).
+            ids = {str(_props(c).get("id")) for c in _componentes(layout)}
+            assert "credencial-graficos" in ids and "credencial-lateral" not in ids, nome
             continue
         colunas = [c for c in _componentes(layout) if "tela-lateral" in str(_props(c).get("className") or "")]
         assert colunas, nome

@@ -3,7 +3,9 @@
 Cada consulta devolve contagens, somas e horários. Nenhuma traz `chatId`, IP,
 telefone ou texto digitado: quando um identificador entra numa consulta, é só
 para contar (`count_distinct`) ou para ligar duas linhas da mesma requisição, e
-nunca sai dela. Nada lê o banco (#309) nem o segredo da credencial do Verde: a
+nunca sai dela. A exceção são as ocorrências de problema (`ocorrencias`): o
+`chatId` volta da consulta para saber o que aconteceu com a conversa depois, e
+fica na função, fora do que ela devolve e do cache. Nada lê o banco (#309) nem o segredo da credencial do Verde: a
 validade vem do log da conferência diária.
 
 Credenciais: as da máquina ou da tarefa, pela cadeia padrão do boto3 (na máquina
@@ -27,7 +29,7 @@ import urllib.parse
 import urllib.request
 from collections.abc import Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
 
@@ -50,7 +52,9 @@ from painel.dados.modelo import (
     AMBIENTE_DA_ORIGEM,
     FUSO,
     PREFIXO_DOS_ALARMES,
+    QA,
     Alarme,
+    AlertaDeCodigo,
     Ambiente,
     Assunto,
     ContagemPorDia,
@@ -58,6 +62,7 @@ from painel.dados.modelo import (
     ConversasDoFluxo,
     CpuELatencia,
     Credencial,
+    DefeitoDoQA,
     Desfecho,
     DesfechoDoFluxo,
     DiaDoModelo,
@@ -74,10 +79,13 @@ from painel.dados.modelo import (
     Fonte,
     GastoDeIA,
     GastoDoAssunto,
+    HoraDaInfra,
     HorarioDaConferencia,
     IncidenteDeCredencial,
     Leitura,
     MudancaNaIA,
+    Ocorrencia,
+    OcorrenciasDoPeriodo,
     Origem,
     OrigemNaoAtendida,
     ProblemaNoDia,
@@ -90,6 +98,7 @@ from painel.dados.modelo import (
     ResumoDoOrquestrador,
     ResumoDoPeriodo,
     RodadaDaTriagem,
+    RodadaDoQA,
     Rotina,
     SaidaDaTriagem,
     SaudeServico,
@@ -97,17 +106,18 @@ from painel.dados.modelo import (
     TempoDeResposta,
     TokensDoDia,
     TokensRegistrados,
+    TomDaIA,
     TrechoDeNaoEncontrado,
     UsoDaIA,
+    ValidadeConferida,
     alarme_do_nome,
     destino_do_log,
 )
+from painel.tom import TITULO_DAS_NOTAS, ler_comentario_do_tom, ler_notas
 
 registro = logging.getLogger(__name__)
 
-REGIAO = "us-east-1"
 REPOSITORIO = "dgd-dprj/maria-langgraph-pp"
-CLUSTER = "maria-langgraph-pp"
 INICIO_DAS_ROTINAS = date(2026, 9, 19)
 # Produção passou a rodar a versão Python em 23/10, às 12:31; o incidente da
 # credencial de produção foi de 22/10, 13:27, até 23/10, 12:34 (levantamento de 23/10).
@@ -182,7 +192,10 @@ def o_dia(dia: date) -> date:
 
 
 def _instante(texto: str) -> datetime:
-    """ "2026-10-25 15:25:19.991", em UTC, como o Logs Insights devolve."""
+    """ "2026-10-25 15:25:19.991", em UTC, como o Logs Insights devolve. Dentro de um
+    `stats`, `earliest(@timestamp)` e `max(@timestamp)` vêm em milissegundos ("1794255319653")."""
+    if texto.isdigit():
+        return datetime.fromtimestamp(int(texto) / 1000, tz=UTC).astimezone(FUSO)
     return datetime.strptime(texto[:19], "%Y-%m-%d %H:%M:%S").replace(tzinfo=UTC).astimezone(FUSO)
 
 
@@ -301,6 +314,88 @@ def _hora_do_github(texto: str) -> datetime:
     return datetime.strptime(texto[:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=UTC).astimezone(FUSO)
 
 
+# ── QA: o que cada rodada imprime ─────────────────────────────────────────
+
+# O log do GitHub começa cada linha com a hora ("2026-11-16T18:10:45.1234567Z ").
+_HORA_DA_LINHA = re.compile(r"^\S+Z ")
+# scripts/qa/fluxos_ponta_a_ponta.py (maria-langgraph-pp #502): o resumo de cada grupo e a linha de cada cenário que falhou.
+CENARIOS_OK = re.compile(r"\*\*(\d+) de (\d+) cenários? OK\.\*\*")
+CENARIO_QUE_FALHOU = re.compile(r"^\| (.+?) \| \*\*FALHOU\*\* \| (.*?) \|\s*$")
+# migracao-specs/qa/qa_staging.py: "**20 de 20 OK.** Custo de IA: US$ 0.0052." e "- ❌ conferência (detalhe)".
+RESUMO_DA_STAGING = re.compile(r"\*\*(\d+) de (\d+) OK\.\*\*\s*Custo de IA: ~?US\$ (\d+(?:[.,]\d+)?)")
+CONFERENCIA_QUE_FALHOU = re.compile(r"^- ❌ (.+?)(?: \((.*)\))?\s*$")
+# O comentário de 16/11 (PR #496) trouxe duas rodadas numa tabela: "| 1ª (09:50) | **11 de 18** | US$ 0,0105 |".
+RODADA_NA_TABELA = re.compile(r"^\| (\d+)ª \((\d{2}):(\d{2})\) \| \*\*(\d+) de (\d+)\*\* \| ~?US\$ (\d+(?:[.,]\d+)?) \|")
+COMMIT_NO_RESUMO = re.compile(r"commit `?([0-9a-f]{7,40})`?")
+MOTIVO_NA_TABELA = re.compile(r"\*\*O que falhou[^*]*\*\*\s*(.+)")
+# O detalhe vai à tela como veio do roteiro (dados inventados), cortado para caber na linha.
+TAMANHO_DO_DETALHE = 300
+
+
+def _dinheiro_do_texto(texto: str) -> float:
+    return float(texto.replace(",", "."))
+
+
+def ler_log_do_ponta_a_ponta(texto: str) -> tuple[int, int, list[tuple[str, str]]]:
+    """Do log do job `ponta_a_ponta`: quantos cenários passaram, de quantos, e os que falharam."""
+    passaram = total = 0
+    falhas: list[tuple[str, str]] = []
+    for bruta in texto.splitlines():
+        linha = _HORA_DA_LINHA.sub("", bruta, count=1).strip()
+        if achou := CENARIOS_OK.search(linha):
+            passaram, total = passaram + int(achou.group(1)), total + int(achou.group(2))
+        elif achou := CENARIO_QUE_FALHOU.match(linha):
+            falhas.append((achou.group(1).strip(), achou.group(2).strip()[:TAMANHO_DO_DETALHE]))
+    return passaram, total, falhas
+
+
+def ler_comentario_da_staging(corpo: str, publicado: datetime, pr: int) -> tuple[list[RodadaDoQA], list[DefeitoDoQA]]:
+    """As rodadas e os defeitos de um comentário "QA da staging" num PR para a staging.
+
+    Entende o resumo do roteiro e a tabela de rodadas do comentário de 16/11. Um
+    comentário que não traz nenhum dos dois não vira rodada."""
+    commit = achou.group(1)[:7] if (achou := COMMIT_NO_RESUMO.search(corpo)) else ""
+    linhas = corpo.splitlines()
+    rodadas: list[RodadaDoQA] = []
+    defeitos: list[DefeitoDoQA] = []
+    if achou := RESUMO_DA_STAGING.search(corpo):
+        rodada = RodadaDoQA(publicado, "staging", pr, commit, int(achou.group(1)), int(achou.group(2)), _dinheiro_do_texto(achou.group(3)))
+        rodadas.append(rodada)
+        for linha in linhas:
+            if falhou := CONFERENCIA_QUE_FALHOU.match(linha.strip()):
+                defeitos.append(DefeitoDoQA(publicado, "staging", falhou.group(1), (falhou.group(2) or "")[:TAMANHO_DO_DETALHE], pr, commit))
+        return rodadas, defeitos
+    motivo = next((m.group(1) for linha in linhas if (m := MOTIVO_NA_TABELA.match(linha.strip()))), "")
+    for linha in linhas:
+        if not (achou := RODADA_NA_TABELA.match(linha.strip())):
+            continue
+        quando = publicado.replace(hour=int(achou.group(2)), minute=int(achou.group(3)), second=0, microsecond=0)
+        passaram, total = int(achou.group(4)), int(achou.group(5))
+        rodadas.append(RodadaDoQA(quando, "staging", pr, commit, passaram, total, _dinheiro_do_texto(achou.group(6))))
+        if passaram < total:
+            cenario = f"{achou.group(1)}ª rodada: {contagem_de(total - passaram)} de {total} falharam"
+            defeitos.append(DefeitoDoQA(quando, "staging", cenario, motivo[:TAMANHO_DO_DETALHE], pr, commit))
+    return rodadas, defeitos
+
+
+def contagem_de(quantas: int) -> str:
+    return f"{quantas} conferência" if quantas == 1 else f"{quantas} conferências"
+
+
+def marcar_resolvidos(rodadas: list[RodadaDoQA], defeitos: list[DefeitoDoQA]) -> list[DefeitoDoQA]:
+    """Um defeito fica resolvido na primeira rodada seguinte que passou inteira: do
+    mesmo PR, no ponta a ponta; qualquer uma, no QA da staging (ela testa a branch toda)."""
+
+    def resolvido_em(defeito: DefeitoDoQA) -> datetime | None:
+        seguintes = sorted(
+            (r for r in rodadas if r.tipo == defeito.tipo and r.quando > defeito.quando and r.passou and (defeito.tipo == "staging" or r.pr == defeito.pr)),
+            key=lambda r: r.quando,
+        )
+        return seguintes[0].quando if seguintes else None
+
+    return [replace(d, resolvido_em=resolvido_em(d)) for d in defeitos]
+
+
 class FonteReal:
     nome = "real"
 
@@ -309,14 +404,21 @@ class FonteReal:
         self._cache = cache
         self._github = github or GitHub()
         configuracao = Config(retries={"max_attempts": 3, "mode": "standard"}, max_pool_connections=20)
-        sessao = boto3.Session(region_name=REGIAO)
-        self._logs = sessao.client("logs", config=configuracao)
-        self._metricas = sessao.client("cloudwatch", config=configuracao)
+        # Um cliente por região: cada ambiente lê os logs e as métricas onde roda (fontes.REGIAO).
+        regioes = {*fontes.REGIAO.values(), fontes.REGIAO_GLOBAL}
+        sessoes = {r: boto3.Session(region_name=r) for r in regioes}
+        self._logs_em = {r: s.client("logs", config=configuracao) for r, s in sessoes.items()}
+        self._metricas_em = {r: s.client("cloudwatch", config=configuracao) for r, s in sessoes.items()}
+        # Os alarmes, o CloudFront, a Lambda e o Bedrock da produção, cobrado na tela financeira.
+        self._metricas = self._metricas_em[fontes.REGIAO_GLOBAL]
         self._trava = threading.Lock()
         self._trava_das_conferencias = threading.Lock()
         self._conferencias_lidas: tuple[float, dict[Ambiente, list[_LinhasDaConferencia]]] | None = None
         self._dimensoes: dict[Ambiente, list[dict[str, str]]] = {}
         self._bedrock: tuple[float, dict[date, GastoDeIA]] | None = None
+        # QA: uma execução do CI que terminou não muda; o que ela disse fica guardado pelo id.
+        self._ponta_a_ponta_lido: dict[int, tuple[RodadaDoQA, list[DefeitoDoQA]] | None] = {}
+        self._trava_do_qa = threading.Lock()
 
     # ── Leitura com estado ────────────────────────────────────────────────
 
@@ -351,17 +453,23 @@ class FonteReal:
     # ── Logs Insights ─────────────────────────────────────────────────────
 
     def _consultar(self, ambientes: Iterable[Ambiente], inicio: datetime, fim: datetime, consulta: str, limite: int = 1000) -> list[dict[str, str]]:
+        ambientes = list(ambientes)
         grupos = [fontes.GRUPO_DE_LOGS[a] for a in ambientes]
+        regioes = {fontes.REGIAO[a] for a in ambientes}
+        if len(regioes) != 1:
+            # O Logs Insights não junta grupos de regiões diferentes numa consulta.
+            raise ValueError(f"consulta com grupos em mais de uma região: {grupos}")
+        logs = self._logs_em[regioes.pop()]
         inicio = max(inicio, self._agora() - timedelta(days=fontes.DIAS_DO_REGISTRO))
         if fim <= inicio:
             return []
-        qid = self._logs.start_query(logGroupNames=grupos, startTime=int(inicio.timestamp()), endTime=int(fim.timestamp()), queryString=consulta, limit=limite)[
+        qid = logs.start_query(logGroupNames=grupos, startTime=int(inicio.timestamp()), endTime=int(fim.timestamp()), queryString=consulta, limit=limite)[
             "queryId"
         ]
         prazo = relogio.monotonic() + ESPERA_DA_CONSULTA
         espera = 0.5
         while relogio.monotonic() < prazo:
-            resposta = self._logs.get_query_results(queryId=qid)
+            resposta = logs.get_query_results(queryId=qid)
             if resposta["status"] == "Complete":
                 return [{c["field"]: c["value"] for c in linha if c["field"] != "@ptr"} for linha in resposta["results"]]
             if resposta["status"] in ("Failed", "Cancelled", "Timeout"):
@@ -369,7 +477,7 @@ class FonteReal:
             relogio.sleep(espera)
             espera = min(espera * 1.5, 3.0)
         try:
-            self._logs.stop_query(queryId=qid)
+            logs.stop_query(queryId=qid)
         except ClientError:
             pass
         raise FalhaDeLeitura("A consulta aos logs passou de 60 segundos.")
@@ -381,9 +489,17 @@ class FonteReal:
     # ── Métricas ──────────────────────────────────────────────────────────
 
     def _serie(
-        self, namespace: str, metrica: str, dimensoes: list[dict[str, str]], estatistica: str, periodo: int, inicio: datetime, fim: datetime
+        self,
+        namespace: str,
+        metrica: str,
+        dimensoes: list[dict[str, str]],
+        estatistica: str,
+        periodo: int,
+        inicio: datetime,
+        fim: datetime,
+        regiao: str = fontes.REGIAO_GLOBAL,
     ) -> list[tuple[datetime, float]]:
-        resposta = self._metricas.get_metric_data(
+        resposta = self._metricas_em[regiao].get_metric_data(
             MetricDataQueries=[
                 {
                     "Id": "m",
@@ -403,7 +519,8 @@ class FonteReal:
         with self._trava:
             if ambiente not in self._dimensoes:
                 prefixo = f"targetgroup/{fontes.TARGET_GROUP[ambiente]}/"
-                metricas = self._metricas.list_metrics(Namespace="AWS/ApplicationELB", MetricName="HealthyHostCount")["Metrics"]
+                cliente = self._metricas_em[fontes.REGIAO[ambiente]]
+                metricas = cliente.list_metrics(Namespace="AWS/ApplicationELB", MetricName="HealthyHostCount")["Metrics"]
                 for m in metricas:
                     nomes = {d["Name"]: d["Value"] for d in m["Dimensions"]}
                     if nomes.get("TargetGroup", "").startswith(prefixo) and "LoadBalancer" in nomes and len(nomes) == 2:
@@ -417,7 +534,7 @@ class FonteReal:
             return self._dimensoes[ambiente]
 
     def _servico(self, ambiente: Ambiente) -> list[dict[str, str]]:
-        return [{"Name": "ClusterName", "Value": CLUSTER}, {"Name": "ServiceName", "Value": fontes.SERVICO_ECS[ambiente]}]
+        return [{"Name": "ClusterName", "Value": fontes.CLUSTER[ambiente]}, {"Name": "ServiceName", "Value": fontes.SERVICO_ECS[ambiente]}]
 
     def _ultimo(self, serie: list[tuple[datetime, float]]) -> float | None:
         return serie[-1][1] if serie else None
@@ -428,13 +545,29 @@ class FonteReal:
         def gerar(agora: datetime) -> SaudeServico:
             saudaveis = self._ultimo(
                 self._serie(
-                    "AWS/ApplicationELB", "HealthyHostCount", self._dimensoes_do_balanceador(ambiente), "Minimum", 60, agora - timedelta(minutes=10), agora
+                    "AWS/ApplicationELB",
+                    "HealthyHostCount",
+                    self._dimensoes_do_balanceador(ambiente),
+                    "Minimum",
+                    60,
+                    agora - timedelta(minutes=10),
+                    agora,
+                    fontes.REGIAO[ambiente],
                 )
             )
             if saudaveis is None:
                 raise FalhaDeLeitura("O balanceador não mandou a contagem nos últimos 10 minutos.")
             desejados = self._ultimo(
-                self._serie("ECS/ContainerInsights", "DesiredTaskCount", self._servico(ambiente), "Maximum", 60, agora - timedelta(minutes=10), agora)
+                self._serie(
+                    "ECS/ContainerInsights",
+                    "DesiredTaskCount",
+                    self._servico(ambiente),
+                    "Maximum",
+                    60,
+                    agora - timedelta(minutes=10),
+                    agora,
+                    fontes.REGIAO[ambiente],
+                )
             )
             return SaudeServico(int(saudaveis), int(desejados) if desejados is not None else 1)
 
@@ -443,7 +576,16 @@ class FonteReal:
     def implantacoes_em_curso(self, ambiente: Ambiente) -> Leitura[int]:
         def gerar(agora: datetime) -> int:
             valor = self._ultimo(
-                self._serie("ECS/ContainerInsights", "DeploymentCount", self._servico(ambiente), "Maximum", 60, agora - timedelta(minutes=10), agora)
+                self._serie(
+                    "ECS/ContainerInsights",
+                    "DeploymentCount",
+                    self._servico(ambiente),
+                    "Maximum",
+                    60,
+                    agora - timedelta(minutes=10),
+                    agora,
+                    fontes.REGIAO[ambiente],
+                )
             )
             if valor is None:
                 raise FalhaDeLeitura("O ECS não mandou a contagem de implantações nos últimos 10 minutos.")
@@ -556,12 +698,16 @@ class FonteReal:
                 [ambiente], agora - timedelta(days=30), agora, 'filter evento = "verde_chamada" and resultado = "sucesso" | stats max(@timestamp) as ultima'
             )
             ultima = conferencias[0] if conferencias else None
+            conferidas = tuple(
+                ValidadeConferida(c.concluido_em, c.valida_ate) for c in reversed(conferencias) if c.concluido_em is not None and c.valida_ate is not None
+            )
             return Credencial(
                 emitida_em=emitida,
                 valida_ate=com_validade.valida_ate,
                 ultima_aceita=_instante(linha["ultima"]) if linha.get("ultima") else None,
                 ultima_conferencia=ultima.concluido_em if ultima else None,
                 conferencia_passou=ultima.passou if ultima else None,
+                conferidas=conferidas,
             )
 
         return self._ler(fontes.fonte_credencial(ambiente), gerar)
@@ -603,15 +749,138 @@ class FonteReal:
 
         return self._ler(fontes.fonte_renovacoes(), gerar)
 
+    # ── GitHub: QA ────────────────────────────────────────────────────────
+
+    def _rodada_do_ponta_a_ponta(self, execucao: dict[str, Any], pr_da_branch: dict[str, int]) -> tuple[RodadaDoQA, list[DefeitoDoQA]] | None:
+        """A rodada do job `ponta_a_ponta` de uma execução do CI; None se ela não tem o job (antes de 16/11).
+
+        O GitHub só liga a execução ao PR enquanto ele está aberto (`pull_requests`):
+        depois do merge, o PR vem pela branch (`pr_da_branch`)."""
+        with self._trava_do_qa:
+            if execucao["id"] in self._ponta_a_ponta_lido:
+                return self._ponta_a_ponta_lido[execucao["id"]]
+        jobs: list[dict[str, Any]] = self._github.json(f"actions/runs/{execucao['id']}/jobs").get("jobs", [])
+        job = next((j for j in jobs if j.get("name") == "ponta_a_ponta" and j.get("conclusion") in ("success", "failure")), None)
+        resultado: tuple[RodadaDoQA, list[DefeitoDoQA]] | None = None
+        if job is not None:
+            try:
+                passaram, total, falhas = ler_log_do_ponta_a_ponta(self._github.texto(f"actions/jobs/{job['id']}/logs"))
+            except urllib.error.HTTPError as erro:
+                # O GitHub apaga o log com o tempo (410) ou não o tem (404): a rodada fica pelo resultado do job.
+                if erro.code not in (404, 410):
+                    raise
+                passaram, total, falhas = 0, 0, []
+            quando = _hora_do_github(job.get("completed_at") or execucao["created_at"])
+            prs = execucao.get("pull_requests") or []
+            pr = prs[0]["number"] if prs else pr_da_branch.get(str(execucao.get("head_branch")))
+            commit = str(execucao.get("head_sha", ""))[:7]
+            if job["conclusion"] == "failure" and not falhas:
+                falhas = [("A Maria não chegou aos cenários", "o job falhou antes do roteiro (subida do Docker ou da Maria); ver o log do job")]
+            rodada = RodadaDoQA(quando, "ponta_a_ponta", pr, commit, passaram, total, 0.0)
+            resultado = (rodada, [DefeitoDoQA(quando, "ponta_a_ponta", nome, detalhe, pr, commit) for nome, detalhe in falhas])
+        with self._trava_do_qa:
+            self._ponta_a_ponta_lido[execucao["id"]] = resultado
+        return resultado
+
+    def _rodadas_da_staging(self, prs: list[dict[str, Any]]) -> tuple[list[RodadaDoQA], list[DefeitoDoQA]]:
+        desde = datetime.combine(fontes.INICIO_DO_QA, time(), tzinfo=FUSO)
+        recentes = [p for p in prs if (p.get("base") or {}).get("ref") == "staging" and _hora_do_github(p["created_at"]) >= desde - timedelta(days=1)]
+
+        def do_pr(pr: dict[str, Any]) -> tuple[list[RodadaDoQA], list[DefeitoDoQA]]:
+            rodadas: list[RodadaDoQA] = []
+            defeitos: list[DefeitoDoQA] = []
+            comentarios: list[dict[str, Any]] = self._github.json(f"issues/{pr['number']}/comments", {"per_page": 100})
+            for comentario in comentarios:
+                corpo = comentario.get("body") or ""
+                if "QA da staging" not in corpo:
+                    continue
+                r, d = ler_comentario_da_staging(corpo, _hora_do_github(comentario["created_at"]), pr["number"])
+                rodadas += r
+                defeitos += d
+            return rodadas, defeitos
+
+        rodadas: list[RodadaDoQA] = []
+        defeitos: list[DefeitoDoQA] = []
+        with ThreadPoolExecutor(max_workers=3) as grupo:
+            for r, d in grupo.map(do_pr, recentes):
+                rodadas += r
+                defeitos += d
+        return rodadas, defeitos
+
+    def qa(self) -> Leitura[QA]:
+        def gerar(_: datetime) -> QA | None:
+            execucoes = [e for e in self._github.execucoes("ci.yml", fontes.INICIO_DO_QA) if e.get("status") == "completed"]
+            # Os 100 PRs mais novos: dão o PR de cada branch e os PRs para a staging, numa leitura só.
+            prs: list[dict[str, Any]] = self._github.json("pulls", {"state": "all", "per_page": 100, "sort": "created", "direction": "desc"})
+            pr_da_branch: dict[str, int] = {}
+            for p in prs:  # do mais novo para o mais velho: a branch fica com o PR mais novo dela
+                pr_da_branch.setdefault(p["head"]["ref"], p["number"])
+            with ThreadPoolExecutor(max_workers=3) as grupo:
+                do_ci = [r for r in grupo.map(lambda e: self._rodada_do_ponta_a_ponta(e, pr_da_branch), execucoes) if r is not None]
+            da_staging = self._rodadas_da_staging(prs)
+            rodadas = sorted([r for r, _ in do_ci] + da_staging[0], key=lambda r: r.quando, reverse=True)
+            if not rodadas:
+                return None
+            defeitos = marcar_resolvidos(rodadas, [d for _, ds in do_ci for d in ds] + da_staging[1])
+            return QA(tuple(rodadas), tuple(sorted(defeitos, key=lambda d: d.quando, reverse=True)))
+
+        return self._ler(fontes.fonte_qa(), gerar)
+
+    def alertas_de_codigo(self) -> Leitura[list[AlertaDeCodigo]]:
+        def gerar(_: datetime) -> list[AlertaDeCodigo]:
+            try:
+                alertas: list[dict[str, Any]] = self._github.json("code-scanning/alerts", {"state": "open", "per_page": 100})
+            except urllib.error.HTTPError as erro:
+                if erro.code in (403, 404):
+                    raise FalhaDeLeitura("O login do GitHub desta máquina não lê os alertas do CodeQL (precisa da permissão security_events).") from erro
+                raise
+            resultado = []
+            for alerta in alertas:
+                regra = alerta.get("rule") or {}
+                onde = (alerta.get("most_recent_instance") or {}).get("location") or {}
+                resultado.append(
+                    AlertaDeCodigo(
+                        regra=regra.get("description") or regra.get("id") or "regra sem nome",
+                        gravidade=regra.get("security_severity_level") or regra.get("severity") or "sem gravidade",
+                        arquivo=onde.get("path", ""),
+                        linha=int(onde.get("start_line") or 0),
+                        desde=_hora_do_github(alerta["created_at"]),
+                    )
+                )
+            return resultado
+
+        return self._ler(fontes.fonte_alertas_de_codigo(), gerar)
+
+    def tom_da_ia(self) -> Leitura[TomDaIA]:
+        def gerar(_: datetime) -> TomDaIA | None:
+            comentarios: list[dict[str, Any]] = self._github.json(f"issues/{fontes.ISSUE_DO_TOM}/comments", {"per_page": 100})
+            do_tom = [c for c in comentarios if fontes.MARCA_DO_TOM in (c.get("body") or "")]
+            if not do_tom:
+                return None
+            tom = ler_comentario_do_tom(do_tom[-1]["body"])
+            issues: list[dict[str, Any]] = self._github.json("issues", {"state": "all", "per_page": 100, "sort": "created", "direction": "desc"})
+            notas = [
+                nota
+                for issue in issues
+                if str(issue.get("title", "")).startswith(TITULO_DAS_NOTAS) and "pull_request" not in issue
+                for nota in ler_notas(issue.get("body") or "", (issue.get("user") or {}).get("login", ""), _hora_do_github(issue["created_at"]))
+            ]
+            return replace(tom, notas=tuple(notas))
+
+        return self._ler(fontes.fonte_tom_da_ia(), gerar)
+
     # ── Verde ─────────────────────────────────────────────────────────────
 
     def _verde_por_dia(self, ambiente: Ambiente, agora: datetime, quantos: int) -> list[DiaDoVerde]:
         hoje = agora.date()
-        dias = [hoje - timedelta(days=n) for n in range(quantos - 1, -1, -1)]
+        return self._verde_entre(ambiente, hoje - timedelta(days=quantos - 1), hoje, agora)
+
+    def _verde_entre(self, ambiente: Ambiente, primeiro: date, ultimo: date, agora: datetime) -> list[DiaDoVerde]:
+        dias = [primeiro + timedelta(days=n) for n in range((ultimo - primeiro).days + 1)]
         linhas = self._consultar(
             [ambiente],
             inicio_do_dia(dias[0]),
-            agora,
+            min(inicio_do_dia(dias[-1] + timedelta(days=1)), agora),
             'filter evento = "verde_chamada" | stats sum(resultado = "sucesso") as aceitas, sum(status = 401 or status = 403) as recusadas,'
             # O resto, aberto: processo que não existe (400, 404, 422) e consulta que não voltou (sem status).
             ' sum(tipoErro = "nao_encontrado") as nao_achou, sum(resultado = "erro") as sem_resposta,'
@@ -702,19 +971,21 @@ class FonteReal:
 
         def detalhar(bloco: tuple[datetime, datetime]) -> IncidenteDeCredencial | None:
             comeco, fim_das_recusas = bloco
-            # Os horários exatos, já que as horas acima são cheias.
+            # Os horários exatos, já que as horas acima são cheias, e as conversas que
+            # bateram na recusa: o chatId só é contado, e não sai da consulta.
             exato = self._uma(
                 [ambiente],
                 comeco,
                 fim_das_recusas + timedelta(hours=1),
-                'filter evento = "verde_chamada" and (status = 401 or status = 403) | stats min(@timestamp) as ini, max(@timestamp) as fim, count(*) as n',
+                'filter evento = "verde_chamada" and (status = 401 or status = 403)'
+                " | stats min(@timestamp) as ini, max(@timestamp) as fim, count(*) as n, count_distinct(chatId) as conversas",
             )
             if _inteiro(exato, "n") < RECUSAS_PARA_INCIDENTE or not exato.get("ini"):
                 return None
             ultima = _instante(exato["fim"])
             volta = self._uma([ambiente], ultima, agora, 'filter evento = "verde_chamada" and resultado = "sucesso" | stats min(@timestamp) as volta')
             return IncidenteDeCredencial(
-                ambiente, _instante(exato["ini"]), _instante(volta["volta"]) if volta.get("volta") else None, _inteiro(exato, "n"), None
+                ambiente, _instante(exato["ini"]), _instante(volta["volta"]) if volta.get("volta") else None, _inteiro(exato, "n"), _inteiro(exato, "conversas")
             )
 
         if not blocos:
@@ -1085,8 +1356,9 @@ class FonteReal:
                 inicio, fim = agora.replace(minute=0, second=0, microsecond=0) - timedelta(hours=23), agora
             else:
                 inicio, fim = no_dia(dia, agora)
-            pedidos = dict(self._serie("AWS/ApplicationELB", "RequestCount", dimensoes, "Sum", 3600, inicio, fim))
-            erros = dict(self._serie("AWS/ApplicationELB", "HTTPCode_Target_5XX_Count", dimensoes, "Sum", 3600, inicio, fim))
+            regiao = fontes.REGIAO[ambiente]
+            pedidos = dict(self._serie("AWS/ApplicationELB", "RequestCount", dimensoes, "Sum", 3600, inicio, fim, regiao))
+            erros = dict(self._serie("AWS/ApplicationELB", "HTTPCode_Target_5XX_Count", dimensoes, "Sum", 3600, inicio, fim, regiao))
             horas = [h for h in (inicio + timedelta(hours=n) for n in range(24)) if h < fim]
             return [RequisicoesPorHora(h, int(pedidos.get(h, 0)), int(erros.get(h, 0))) for h in horas]
 
@@ -1096,7 +1368,7 @@ class FonteReal:
         def gerar(agora: datetime) -> RecursosDoServico:
             servico = self._servico(ambiente)
             series = {
-                nome: self._serie("ECS/ContainerInsights", nome, servico, "Average", 300, agora - timedelta(hours=24), agora)
+                nome: self._serie("ECS/ContainerInsights", nome, servico, "Average", 300, agora - timedelta(hours=24), agora, fontes.REGIAO[ambiente])
                 for nome in ("CpuUtilized", "CpuReserved", "MemoryUtilized", "MemoryReserved")
             }
             if not all(series.values()):
@@ -1157,17 +1429,27 @@ class FonteReal:
             horas = [h for h in (inicio + timedelta(hours=n) for n in range(24)) if h < fim]
             linhas = []
             for ambiente in Ambiente:
-                cpu = dict(self._serie("AWS/ECS", "CPUUtilization", self._servico(ambiente), "Average", 3600, inicio, fim))
-                p99 = dict(self._serie("AWS/ApplicationELB", "TargetResponseTime", self._dimensoes_do_balanceador(ambiente), "p99", 3600, inicio, fim))
+                regiao = fontes.REGIAO[ambiente]
+                cpu = dict(self._serie("AWS/ECS", "CPUUtilization", self._servico(ambiente), "Average", 3600, inicio, fim, regiao))
+                balanceador = self._dimensoes_do_balanceador(ambiente)
+                p99 = dict(self._serie("AWS/ApplicationELB", "TargetResponseTime", balanceador, "p99", 3600, inicio, fim, regiao))
                 linhas += [CpuELatencia(h, ambiente, cpu.get(h), p99.get(h)) for h in horas]
             return linhas if any(x.cpu is not None or x.p99 is not None for x in linhas) else None
 
         return self._ler(fontes.fonte_cpu_e_latencia(dia), gerar)
 
-    def horarios_da_conferencia(self) -> Leitura[list[HorarioDaConferencia]]:
+    def horarios_da_conferencia(self, mes: date | None = None) -> Leitura[list[HorarioDaConferencia]]:
         def gerar(agora: datetime) -> list[HorarioDaConferencia]:
-            execucoes = self._github.execucoes("verificar-token-verde.yml", agora.date() - timedelta(days=30))
-            agendadas = [e for e in execucoes if e.get("event") == "schedule" and e.get("status") == "completed"]
+            desde = agora.date() - timedelta(days=30) if mes is None else mes.replace(day=1)
+            execucoes = self._github.execucoes("verificar-token-verde.yml", desde)
+            agendadas = [
+                e
+                for e in execucoes
+                if e.get("event") == "schedule"
+                and e.get("status") == "completed"
+                # No mês escolhido, só as dele: o GitHub filtra só o começo.
+                and (mes is None or _hora_do_github(e.get("run_started_at") or e["created_at"]).date() <= fontes.ultimo_dia_do_mes(mes))
+            ]
             horarios = [
                 HorarioDaConferencia(
                     _hora_do_github(e.get("run_started_at") or e["created_at"]).date(),
@@ -1178,10 +1460,18 @@ class FonteReal:
             ]
             return sorted(horarios, key=lambda h: h.comecou)
 
-        return self._ler(fontes.fonte_horarios_da_conferencia(), gerar)
+        return self._ler(fontes.fonte_horarios_da_conferencia(mes), gerar)
 
-    def verde_do_mes(self, ambiente: Ambiente) -> Leitura[list[DiaDoVerde]]:
-        return self._ler(fontes.fonte_verde_do_mes(ambiente), lambda agora: self._verde_por_dia(ambiente, agora, 30))
+    def verde_do_mes(self, ambiente: Ambiente, mes: date | None = None) -> Leitura[list[DiaDoVerde]]:
+        def gerar(agora: datetime) -> list[DiaDoVerde] | None:
+            if mes is None:
+                return self._verde_por_dia(ambiente, agora, 30)
+            # Os logs guardam 30 dias: do mês escolhido, só os dias que ainda estão neles.
+            primeiro = max(mes.replace(day=1), fontes.primeiro_dia_nos_logs(agora))
+            ultimo = min(fontes.ultimo_dia_do_mes(mes), agora.date())
+            return self._verde_entre(ambiente, primeiro, ultimo, agora) if primeiro <= ultimo else None
+
+        return self._ler(fontes.fonte_verde_do_mes(ambiente, mes), gerar)
 
     # ── Observatório da IA ────────────────────────────────────────────────
 
@@ -1487,3 +1777,361 @@ class FonteReal:
             return envios or None
 
         return self._ler(fontes.fonte_envios_do_whatsapp(ambiente, dia), gerar)
+
+    # ── Atendimento: problemas e defeitos ─────────────────────────────────
+    # Uma linha por ocorrência (regra 4 revista em 10/11: nunca identificar a
+    # conversa). O `chatId` volta das consultas só para saber o que aconteceu com
+    # a conversa depois; fica nesta função e não entra no que ela devolve.
+
+    def ocorrencias(self, origem: Origem, dia: date | None = None) -> Leitura[OcorrenciasDoPeriodo]:
+        def gerar(agora: datetime) -> OcorrenciasDoPeriodo | None:
+            inicio, fim = self._janela(origem, agora, dia)
+            inicio = max(inicio, agora - timedelta(days=fontes.DIAS_DO_REGISTRO))
+            if fim <= inicio:
+                return None
+            ambiente = AMBIENTE_DA_ORIGEM[origem]
+            com_eventos = ", ".join(f'"{e}"' for e in EVENTOS_COM_PEDIDO)
+            # As duas consultas rodam juntas: em fila, a leitura fria levava cerca de 9 s (medido em 10/11).
+            pedidos_ = _JUNTAS.submit(
+                self._consultar,
+                [ambiente],
+                inicio,
+                fim,
+                f'filter msg in ["incoming request", "request completed"] or ispresent(err.type) or evento in [{com_eventos}]'
+                " | stats earliest(@timestamp) as ini, max(@timestamp) as fim, earliest(req.url) as caminho, earliest(req.method) as metodo,"
+                " max(res.statusCode) as codigo, max(responseTime) as ms, earliest(err.type) as tipo_erro, earliest(err.code) as codigo_erro,"
+                " earliest(chatId) as conversa, earliest(fluxoId) as fluxo by reqId, hostname, pid"
+                f" | filter caminho like /{ROTAS_DA_API}/ and (codigo >= 400 or ms >= {CORTE_DO_CLOUDFRONT_MS})"
+                f" | sort ini desc | limit {LIMITE_DE_OCORRENCIAS}",
+                limite=LIMITE_DE_OCORRENCIAS,
+            )
+            problemas = ", ".join(f'"{e}"' for e in EVENTOS_DE_PROBLEMA)
+            funcoes = "|".join(FUNCOES_COM_FALHA)
+            eventos = self._consultar(
+                [ambiente],
+                inicio,
+                fim,
+                f'filter (evento = "verde_chamada" and resultado != "sucesso" and (not ispresent(tipoErro) or tipoErro != "nao_encontrado"))'
+                f" or evento in [{problemas}]"
+                ' or (evento = "whatsapp_status_entrega" and status = "failed")'
+                f" or (level >= 50 and msg like /^\\[({funcoes})\\] falha/)"
+                # O `funcao` do parse vem no resultado sem estar no fields (repetido ali, a consulta é recusada).
+                " | parse msg /^\\[(?<funcao>[a-z-]+)\\]/"
+                " | fields @timestamp, evento, chamada, resultado, status, tipoErro, duracaoMs, tentativa, err.type as tipo_erro, motivo,"
+                " erroCodigo, fluxoId, chatId, no, reqId"
+                f" | sort @timestamp desc | limit {LIMITE_DE_OCORRENCIAS}",
+                limite=LIMITE_DE_OCORRENCIAS,
+            )
+            pedidos = pedidos_.result()
+            brutas = [o for o in (_do_pedido(linha) for linha in pedidos) if o is not None]
+            brutas += [o for o in (_do_evento(linha) for linha in eventos) if o is not None]
+            if not brutas:
+                return None
+            conversas = {conversa for _, conversa, _ in brutas if conversa}
+            depois = self._depois_das_conversas(ambiente, inicio, agora, sorted(conversas))
+            resultado = [_com_o_depois(o, conversa, depois.get(conversa), referencia, agora) for o, conversa, referencia in brutas]
+            resultado.sort(key=lambda o: o.hora, reverse=True)
+            cortada = len(pedidos) >= LIMITE_DE_OCORRENCIAS or len(eventos) >= LIMITE_DE_OCORRENCIAS
+            return OcorrenciasDoPeriodo(inicio, fim, resultado, len(conversas), cortada)
+
+        return self._ler(fontes.fonte_ocorrencias(origem, dia), gerar)
+
+    def _depois_das_conversas(self, ambiente: Ambiente, inicio: datetime, agora: datetime, conversas: list[str]) -> dict[str, _Depois]:
+        """O fim, a expiração e a última resposta de cada conversa, da janela até agora.
+        Em lotes: a consulta do Logs Insights tem até 10 mil caracteres."""
+        resultado: dict[str, _Depois] = {}
+        for n in range(0, len(conversas), CONVERSAS_POR_CONSULTA):
+            lote = ", ".join(json.dumps(c) for c in conversas[n : n + CONVERSAS_POR_CONSULTA])
+            linhas = self._consultar(
+                [ambiente],
+                inicio,
+                agora,
+                f'filter evento in ["atendimento_finalizado", "atendimento_expirado", "resposta_recebida"] and chatId in [{lote}]'
+                " | stats max(@timestamp) as ultima, latest(motivoHandoff) as motivo by chatId, evento",
+                limite=10000,
+            )
+            for linha in linhas:
+                conversa, quando = linha.get("chatId", ""), linha.get("ultima")
+                if not conversa or not quando:
+                    continue
+                atual = resultado.setdefault(conversa, _Depois())
+                evento = linha.get("evento")
+                if evento == "atendimento_finalizado":
+                    atual.terminou, atual.motivo = _instante(quando), linha.get("motivo", "")
+                elif evento == "atendimento_expirado":
+                    atual.expirou = _instante(quando)
+                else:
+                    atual.ultima_resposta = _instante(quando)
+        return resultado
+
+    # ── Infra ─────────────────────────────────────────────────────────────
+
+    def _varias_series(
+        self, pedidos: dict[str, tuple[str, str, list[dict[str, str]], str]], periodo: int, inicio: datetime, fim: datetime, regiao: str
+    ) -> dict[str, dict[datetime, float]]:
+        """Várias métricas da mesma região numa chamada só: id -> (namespace, métrica, dimensões, estatística)."""
+        consultas = [
+            {"Id": id_, "MetricStat": {"Metric": {"Namespace": ns, "MetricName": m, "Dimensions": d}, "Period": periodo, "Stat": stat}}
+            for id_, (ns, m, d, stat) in pedidos.items()
+        ]
+        resultado: dict[str, dict[datetime, float]] = {id_: {} for id_ in pedidos}
+        argumentos: dict[str, Any] = {"MetricDataQueries": consultas, "StartTime": inicio, "EndTime": fim, "ScanBy": "TimestampAscending"}
+        while True:
+            resposta = self._metricas_em[regiao].get_metric_data(**argumentos)
+            for serie in resposta["MetricDataResults"]:
+                resultado[serie["Id"]].update({t.astimezone(FUSO): float(v) for t, v in zip(serie["Timestamps"], serie["Values"], strict=True)})
+            if not resposta.get("NextToken"):
+                return resultado
+            argumentos["NextToken"] = resposta["NextToken"]
+
+    def _horas_da_infra(self, ambiente: Ambiente, inicio: datetime, fim: datetime) -> list[HoraDaInfra]:
+        def d(**pares: str) -> list[dict[str, str]]:
+            return [{"Name": k, "Value": v} for k, v in pares.items()]
+
+        entrada = d(DistributionId=fontes.DISTRIBUICAO[ambiente], Region="Global")
+        servico, balanceador = self._servico(ambiente), self._dimensoes_do_balanceador(ambiente)
+        banco, modelo = d(DBInstanceIdentifier=fontes.BANCO[ambiente]), d(ModelId=fontes.MODELO_DO[ambiente])
+        saida, email = d(NatGatewayId=fontes.SAIDA_NAT[ambiente]), d(FunctionName=fontes.FUNCAO_DO_EMAIL)
+        # O CloudFront e a Lambda mandam as métricas para a Virgínia; o resto fica na região do ambiente.
+        globais = self._varias_series(
+            {
+                "pedidos": ("AWS/CloudFront", "Requests", entrada, "Sum"),
+                "taxa5": ("AWS/CloudFront", "5xxErrorRate", entrada, "Average"),
+                "taxa4": ("AWS/CloudFront", "4xxErrorRate", entrada, "Average"),
+                "email_erros": ("AWS/Lambda", "Errors", email, "Sum"),
+                "email_limitadas": ("AWS/Lambda", "Throttles", email, "Sum"),
+            },
+            3600,
+            inicio,
+            fim,
+            fontes.REGIAO_GLOBAL,
+        )
+        regionais = self._varias_series(
+            {
+                "p99": ("AWS/ApplicationELB", "TargetResponseTime", balanceador, "p99"),
+                "saudaveis": ("AWS/ApplicationELB", "HealthyHostCount", balanceador, "Minimum"),
+                "desejados": ("ECS/ContainerInsights", "DesiredTaskCount", servico, "Maximum"),
+                "cpu": ("AWS/ECS", "CPUUtilization", servico, "Maximum"),
+                "memoria": ("AWS/ECS", "MemoryUtilization", servico, "Maximum"),
+                "banco_cpu": ("AWS/RDS", "CPUUtilization", banco, "Maximum"),
+                "banco_conexoes": ("AWS/RDS", "DatabaseConnections", banco, "Maximum"),
+                "banco_memoria": ("AWS/RDS", "FreeableMemory", banco, "Minimum"),
+                "nat_portas": ("AWS/NATGateway", "ErrorPortAllocation", saida, "Sum"),
+                "nat_perdidos": ("AWS/NATGateway", "PacketsDropCount", saida, "Sum"),
+                "ia_pedido": ("AWS/Bedrock", "InvocationClientErrors", modelo, "Sum"),
+                "ia_servico": ("AWS/Bedrock", "InvocationServerErrors", modelo, "Sum"),
+                "ia_limitadas": ("AWS/Bedrock", "InvocationThrottles", modelo, "Sum"),
+            },
+            3600,
+            inicio,
+            fim,
+            fontes.REGIAO[ambiente],
+        )
+        series = {**regionais, **globais}
+        linhas = self._consultar(
+            [ambiente],
+            inicio,
+            fim,
+            'filter (evento = "verde_chamada" and resultado != "sucesso" and (not ispresent(tipoErro) or tipoErro != "nao_encontrado"))'
+            f' or (msg = "request completed" and responseTime >= {CORTE_DO_CLOUDFRONT_MS}) or @message like /Application startup complete/'
+            ' | stats sum(evento = "verde_chamada") as verde, sum(msg = "request completed") as cortadas,'
+            ' sum(strcontains(@message, "Application startup complete")) as subidas by bin(1h) as hora',
+        )
+        dos_logs = {_instante(linha["hora"]): linha for linha in linhas if linha.get("hora")}
+        horas = [h for h in (inicio + timedelta(hours=n) for n in range(int((fim - inicio).total_seconds() // 3600) + 1)) if h < fim]
+
+        def v(nome: str, hora: datetime) -> float | None:
+            return series[nome].get(hora)
+
+        def n(nome: str, hora: datetime) -> int:
+            return round(series[nome].get(hora) or 0)
+
+        resultado = []
+        for h in horas:
+            pedidos = n("pedidos", h)
+            logs = dos_logs.get(h, {})
+            resultado.append(
+                HoraDaInfra(
+                    hora=h,
+                    pedidos=pedidos,
+                    erros_5xx=round(pedidos * (v("taxa5", h) or 0) / 100),
+                    erros_4xx=round(pedidos * (v("taxa4", h) or 0) / 100),
+                    p99=v("p99", h),
+                    saudaveis=v("saudaveis", h),
+                    desejados=v("desejados", h),
+                    cpu=v("cpu", h),
+                    memoria=v("memoria", h),
+                    reinicios=_inteiro(logs, "subidas"),
+                    banco_cpu=v("banco_cpu", h),
+                    banco_conexoes=v("banco_conexoes", h),
+                    banco_memoria_livre=v("banco_memoria", h),
+                    saida_erros=n("nat_portas", h) + n("nat_perdidos", h),
+                    ia_recusas=n("ia_pedido", h) + n("ia_servico", h) + n("ia_limitadas", h),
+                    email_erros=n("email_erros", h) + n("email_limitadas", h),
+                    verde_falhas=_inteiro(logs, "verde"),
+                    respostas_cortadas=_inteiro(logs, "cortadas"),
+                )
+            )
+        return resultado
+
+    def infra_por_hora(self, ambiente: Ambiente, dia: date | None = None) -> Leitura[list[HoraDaInfra]]:
+        # Com a hora escolhida, o gráfico mostra o dia inteiro, com a hora em destaque.
+        no_dia_escolhido = o_dia(dia) if dia is not None else None
+
+        def gerar(agora: datetime) -> list[HoraDaInfra] | None:
+            if no_dia_escolhido is None:
+                inicio, fim = agora.replace(minute=0, second=0, microsecond=0) - timedelta(hours=23), agora
+            else:
+                inicio, fim = no_dia(no_dia_escolhido, agora)
+            return self._horas_da_infra(ambiente, inicio, fim) or None
+
+        return self._ler(fontes.fonte_infra_por_hora(ambiente, dia), gerar)
+
+    def infra_por_dia(self, ambiente: Ambiente) -> Leitura[list[HoraDaInfra]]:
+        def gerar(agora: datetime) -> list[HoraDaInfra] | None:
+            inicio = inicio_do_dia(agora.date() - timedelta(days=fontes.DIAS_DA_INFRA - 1))
+            return self._horas_da_infra(ambiente, inicio, agora) or None
+
+        return self._ler(fontes.fonte_infra_por_dia(ambiente), gerar)
+
+
+# ── Problemas e defeitos: da linha de log à ocorrência ────────────────────
+
+# A CloudFront espera a origem por 30 s (o padrão da AWS; o cloudfront.tf da Maria não muda).
+CORTE_DO_CLOUDFRONT_MS = 30_000
+# As rotas da Maria: "/webhooks", "/.env" e afins são varredura de robô (levantamento de 10/11).
+ROTAS_DA_API = "^\\/(atendimentos|webhook\\/|fluxos)"
+LIMITE_DE_OCORRENCIAS = 2000
+CONVERSAS_POR_CONSULTA = 150
+# Os eventos que trazem o reqId junto com a conversa: ligam a requisição a ela.
+EVENTOS_COM_PEDIDO = (
+    "atendimento_criado",
+    "resposta_recebida",
+    "pergunta_enviada",
+    "atendimento_finalizado",
+    *EVENTOS_DO_ORQUESTRADOR,
+    "orquestrador_inconsistencia",
+)
+EVENTOS_DE_PROBLEMA = (
+    "email_nudecon_falha",
+    "atendimento_sem_checkpoint",
+    "orquestrador_inconsistencia",
+    "whatsapp_envio_falhou",
+    "whatsapp_envio_erro",
+    "whatsapp_bridge_erro",
+)
+# As linhas de erro "[função] falha ..." das funções de IA e do fluxo de plano de saúde.
+FUNCOES_COM_FALHA = (*FUNCOES_DE_IA, "plano-saude")
+TENTATIVAS_DO_VERDE = 3
+DEPOIS_RECENTE = timedelta(minutes=30)
+# As consultas de uma mesma leitura que podem rodar juntas (as ocorrências: os pedidos e os eventos).
+_JUNTAS = ThreadPoolExecutor(max_workers=4, thread_name_prefix="junta")
+
+
+@dataclass
+class _Depois:
+    terminou: datetime | None = None
+    motivo: str = ""
+    expirou: datetime | None = None
+    ultima_resposta: datetime | None = None
+
+
+def _etapa_da_rota(metodo: str, caminho: str) -> tuple[str, str]:
+    """ "GET /atendimentos/:chatId" e a conversa do caminho: o `chatId` sai do texto
+    que a tela mostra, e volta só para saber o que aconteceu depois."""
+    partes = caminho.split("?", 1)[0].strip("/").split("/")
+    conversa = ""
+    if len(partes) >= 2 and partes[0] == "atendimentos" and partes[1] not in ("respostas", "orquestrador"):
+        conversa, partes[1] = urllib.parse.unquote(partes[1]), ":chatId"
+    return f"{metodo} /{'/'.join(partes)}".strip(), conversa
+
+
+def _segundos(valor: str | None) -> float | None:
+    return float(valor) / 1000 if valor not in (None, "") else None
+
+
+def _do_pedido(linha: dict[str, str]) -> tuple[Ocorrencia, str, datetime] | None:
+    """Uma requisição com erro ou lenta: a ocorrência, a conversa e a hora de referência (o fim)."""
+    if not linha.get("ini"):
+        return None
+    etapa, da_rota = _etapa_da_rota(linha.get("metodo", ""), linha.get("caminho", ""))
+    codigo, ms = _inteiro(linha, "codigo"), _real(linha, "ms")
+    if codigo >= 500:
+        tipo, texto = "erro_da_maria", f"{codigo} {linha.get('tipo_erro', '')}".strip()
+    elif ms >= CORTE_DO_CLOUDFRONT_MS:
+        tipo, texto = "resposta_cortada", f"{codigo} depois de {round(ms / 1000)} s"
+    else:
+        tipo, texto = "recusa", f"{codigo} {linha.get('codigo_erro', '')}".strip()
+    ocorrencia = Ocorrencia(
+        hora=_instante(linha["ini"]),
+        tipo=tipo,
+        etapa=etapa,
+        codigo=texto,
+        demora=ms / 1000 if ms else None,
+        fluxo=linha.get("fluxo", ""),
+        depois="sem_conversa",
+        pedido=linha.get("reqId", ""),
+    )
+    return ocorrencia, linha.get("conversa") or da_rota, _instante(linha.get("fim") or linha["ini"])
+
+
+def _do_evento(linha: dict[str, str]) -> tuple[Ocorrencia, str, datetime] | None:
+    """Uma linha de problema (o Verde, o e-mail, a IA, o WhatsApp): a ocorrência, a conversa e a hora."""
+    if not linha.get("@timestamp"):
+        return None
+    evento, funcao = linha.get("evento", ""), linha.get("funcao", "")
+    tentativa = linha.get("tentativa", "")
+    if evento == "verde_chamada":
+        tipo, etapa = "verde", f"Verde: {linha.get('chamada', '')}"
+        if linha.get("resultado") == "erro":
+            codigo = linha.get("tipo_erro") or "sem resposta"
+        else:
+            codigo = f"{linha.get('status', '')} {linha.get('tipoErro', '')}".strip() or "recusou"
+        tentativa = f"{tentativa} de {TENTATIVAS_DO_VERDE}" if tentativa else ""
+    elif evento == "email_nudecon_falha":
+        tipo, etapa = "email", "Email ao NUDECON"
+        codigo = " ".join(x for x in (linha.get("status", ""), linha.get("motivo", ""), linha.get("tipoErro", "")) if x) or "falhou"
+    elif evento == "atendimento_sem_checkpoint":
+        tipo, etapa, codigo = "conversa_cortada", "Banco das conversas", "sem checkpoint"
+    elif evento == "orquestrador_inconsistencia":
+        tipo, etapa, codigo = "triagem", "Triagem por escrita livre", "fluxo fora do catálogo"
+    elif evento.startswith("whatsapp_"):
+        tipo, etapa = "whatsapp", "WhatsApp"
+        codigo = linha.get("erroCodigo") or linha.get("status") or evento.removeprefix("whatsapp_").replace("_", " ")
+    elif funcao == "plano-saude":
+        tipo, etapa, codigo = "fluxo", f"Plano de saúde: {linha.get('no', '')}".rstrip(": "), linha.get("tipoErro") or "falha"
+    elif funcao in FUNCOES_DE_IA:
+        tipo, etapa, codigo = "ia", f"IA: {funcao}", linha.get("tipo_erro") or "falha"
+    else:
+        return None
+    hora = _instante(linha["@timestamp"])
+    ocorrencia = Ocorrencia(
+        hora=hora,
+        tipo=tipo,
+        etapa=etapa,
+        codigo=codigo,
+        demora=_segundos(linha.get("duracaoMs")),
+        fluxo=linha.get("fluxoId", ""),
+        depois="sem_conversa",
+        tentativa=tentativa,
+        pedido=linha.get("reqId", ""),
+    )
+    return ocorrencia, linha.get("chatId", ""), hora
+
+
+def _com_o_depois(ocorrencia: Ocorrencia, conversa: str, depois: _Depois | None, referencia: datetime, agora: datetime) -> Ocorrencia:
+    """O que aconteceu com a conversa depois da ocorrência: encerrou (com o motivo),
+    expirou, seguiu (a pessoa respondeu de novo), parou, ou já estava encerrada."""
+    if not conversa:
+        return replace(ocorrencia, depois="sem_conversa")
+    depois = depois or _Depois()
+    if depois.terminou is not None:
+        # O encerramento grava-se um instante antes da linha "request completed" do mesmo pedido.
+        if depois.terminou >= referencia - timedelta(seconds=1):
+            return replace(ocorrencia, depois="encerrou", motivo=depois.motivo)
+        return replace(ocorrencia, depois="ja_encerrada", motivo=depois.motivo)
+    if depois.expirou is not None and depois.expirou >= referencia:
+        return replace(ocorrencia, depois="expirou")
+    if depois.ultima_resposta is not None and depois.ultima_resposta > referencia:
+        return replace(ocorrencia, depois="seguiu")
+    return replace(ocorrencia, depois="recente" if agora - referencia < DEPOIS_RECENTE else "parou")

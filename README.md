@@ -13,17 +13,19 @@ da leitura ao lado:
 |---|---|---|
 | Agora | Está funcionando? | `/` |
 | Credencial do Verde | Está valendo, e por quanto tempo? | `/credencial` |
-| Atendimento | Como as conversas terminam? | `/atendimento` |
+| Atendimento | Como as conversas terminam? E cada problema, uma linha por ocorrência | `/atendimento` |
 | Fluxos | Por onde as conversas passam, e onde travam? | `/fluxos` |
 | Sistema | Por que está assim? | `/sistema` |
+| Infra | A infraestrutura está estável? | `/infra` |
 | Relatório do dia | Como foi o dia? | `/dia` |
 | Relatório da Aplicação | De onde vem o gasto, em que dia e em que mês? | `/aplicacao` |
 | Observatório da IA | A IA está respondendo bem, e onde ela erra? | `/ia` |
+| QA | O QA está pegando os defeitos, e quanto custa? | `/qa` |
 
 > **Estado em 28/10/2026:** as oito telas leem **dados reais** (CloudWatch e
 > GitHub), com as credenciais de quem roda o painel. Toda tela tem, à direita,
-> a coluna "Mais sinais" (embaixo, em tela menor que 1600 px), menos a Agora,
-> que usa a largura toda para os gráficos de hora em hora. Para ir ao ar
+> a coluna "Mais sinais" (embaixo, em tela menor que 1600 px), menos a Agora, a Infra e o QA,
+> que usam a largura toda (a Infra entrou em 10/11; o QA, em 16/11, só com o GitHub). Para ir ao ar
 > numa tarefa própria, faltam as permissões de [Permissões](#permissões). Por que
 > o painel tem repositório próprio está em [docs/decisoes.md](docs/decisoes.md).
 
@@ -37,7 +39,9 @@ da leitura ao lado:
   `botocore[crt]` (já nas dependências) e de um login válido.
 - **GitHub:** `GITHUB_TOKEN` com leitura do `dgd-dprj/maria-langgraph-pp` ou,
   sem ele, o login do `gh` da máquina. Serve para as rotinas, a validade da
-  credencial do Verde (do log da conferência diária) e as mudanças na IA.
+  credencial do Verde (do log da conferência diária), as mudanças na IA e a tela
+  QA (logs do job `ponta_a_ponta`, comentários "QA da staging" e os alertas do
+  CodeQL, que pedem a permissão `security_events`).
 - **Nada mais:** o painel não lê o banco da Maria nem o segredo da credencial.
 
 A primeira abertura de cada tela, com o cache vazio, leva de 10 a 40 segundos
@@ -59,8 +63,9 @@ Sem credencial da AWS, o painel abre, mas quase todo número fica de fora (a
 Agora inteira, que é quase toda do CloudWatch). Só aparecem os que vêm do
 GitHub. Antes de rodar:
 
-1. **Acesso à AWS.** Peça ao Ícaro leitura na conta da Maria (região
-   `us-east-1`), com as permissões do item 6 de [Permissões](#permissões).
+1. **Acesso à AWS.** Peça ao Ícaro leitura na conta da Maria, nas duas regiões:
+   `us-east-1` (produção, CloudFront, alarmes e Lambda do e-mail) e `sa-east-1`
+   (release, desde 16/11), com as permissões do item 6 de [Permissões](#permissões).
 2. **Login na AWS** com a [AWS CLI](https://docs.aws.amazon.com/cli/), no perfil
    que o Ícaro indicar:
 
@@ -309,8 +314,8 @@ da Maria (as três regras estão em `docs/decisoes.md`).
 4. **Chave nova no bucket de estado** (`maria-tfstate-185327115563`, chave `visor-maria/terraform.tfstate`) e uso da trava `maria-tf-lock`, que são do stack antigo.
 5. **Um papel para aplicar o Terraform do painel**, restrito a recursos com prefixo `visor-maria`. Com ele, a Nicole aplica dali em diante sem acesso a nada da Maria. (A credencial dela hoje não cria recursos na AWS, pelo que os testes de leitura mostraram; ela não tem permissão nem para simular a própria política.)
 6. **Papel da tarefa do painel, só leitura:**
-   - Logs Insights nos grupos `/ecs/maria-langgraph-pp/api` e `/ecs/maria-langgraph-pp-release/api`: `logs:StartQuery`, `logs:GetQueryResults`, `logs:StopQuery` e `logs:DescribeLogGroups`;
-   - métricas: `cloudwatch:GetMetricData` e `cloudwatch:ListMetrics` (`AWS/ApplicationELB`, `AWS/ECS`, `ECS/ContainerInsights`, `AWS/Bedrock`); o `GetMetricData` exige `"Resource": "*"`;
+   - Logs Insights nos grupos `/ecs/maria-langgraph-pp/api` (em `us-east-1`) e `/ecs/maria-langgraph-pp-release-sp/api` (em `sa-east-1`): `logs:StartQuery`, `logs:GetQueryResults`, `logs:StopQuery` e `logs:DescribeLogGroups`;
+   - métricas: `cloudwatch:GetMetricData` e `cloudwatch:ListMetrics` (`AWS/ApplicationELB`, `AWS/ECS`, `ECS/ContainerInsights`, `AWS/Bedrock` e, para a tela Infra, `AWS/CloudFront`, `AWS/RDS`, `AWS/NATGateway` e `AWS/Lambda`); o `GetMetricData` exige `"Resource": "*"`;
    - alertas (quadro "Alertas" da Agora): `cloudwatch:DescribeAlarms` e `cloudwatch:DescribeAlarmHistory`, nos alarmes `visor-maria-*` de `infra/alertas`;
    - opcionais: `pricing:GetProducts`, para conferir preço, e `rds:DescribeDBInstances`, para o rateio do stack antigo.
 7. **Papel de deploy do GitHub** que confie em `repo:dgd-dprj/visor-maria:ref:refs/heads/main`, usando o provedor OIDC que já existe (consultado por nome, sem mexer nele nem no papel da Maria), com push só no ECR do painel e `ecs:UpdateService`/`ecs:DescribeServices` só no serviço do painel.
@@ -332,6 +337,7 @@ foi conferido na página da AWS em 26/10, os outros não.
 | Logs Insights, com cache das janelas longas | **US$ 0,30** | cerca de 0,7 GB varridos por hora de tela aberta × 88 h × US$ 0,005/GB |
 | Logs Insights da tela Fluxos, só quando aberta | **até US$ 1,30** | 5 consultas de 7 dias a cada 5 minutos e 2 de 30 dias a cada 15: cerca de 3 GB por hora × 88 h × US$ 0,005/GB, se ela ficar aberta o tempo todo |
 | Métricas do CloudWatch (`GetMetricData`) | **US$ 0,50** | cerca de 6 métricas por minuto de tela aberta, 2 pessoas, a US$ 0,01 por mil |
+| Tela Infra e os problemas do Atendimento, só quando abertas | **até US$ 0,50** | cerca de 20 métricas a cada 5 minutos e consultas de logs de poucos MB (levantamento de 10/11) |
 | Segredo do token do GitHub | **US$ 0,40** | 1 segredo no Secrets Manager |
 | Tráfego pelo NAT, imagem no ECR, logs do painel | **US$ 0,30** | centavos cada; o NAT por hora já é pago pelo stack antigo |
 | Túnel (Session Manager, ECS Exec) | US$ 0 | sem cobrança própria |

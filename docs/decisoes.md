@@ -2,6 +2,219 @@
 
 Cada decisão com a data, quem decidiu, o motivo e o que ela custa.
 
+## 2026-11-16: o tom da IA no Observatório e o gasto fora do atendimento
+
+**Decisão (Nicole).** A comparação do tom da pergunta de desambiguação (Haiku, Qwen sem
+o tom e Qwen com o tom; maria-langgraph-pp #508) aparece no Observatório da IA, no quadro
+"Tom da IA" (visor-maria#12). O quadro mostra as regras automáticas por versão, as
+palavras em média, o emoji, o gasto de cada versão, as notas da equipe e a amostra lado
+a lado. O gasto da comparação e o do QA da staging também aparecem no Relatório da
+Aplicação, no quadro "Gasto fora do atendimento", sem o detalhe, que fica nas outras
+duas telas.
+
+- **Fonte:** o comentário mais novo da #508 com a marca `<!-- visor:tom-da-ia -->`, um
+  bloco JSON que o `scripts/avaliacao/tom_desambiguacao.py` produz. O Visor lê o
+  comentário, e não o arquivo do repositório, para mostrar a comparação antes do merge.
+- **A nota humana é cega e o Visor continua só lendo.** O botão "Dar notas" abre no
+  GitHub uma issue já preenchida (`[nota de tom]`) com 8 relatos. Cada pergunta vai com
+  um código (`c3-1`, `c3-2`), sem o nome do modelo, e a ordem troca a cada caso. O
+  Visor lê as notas dessas issues. Entram só a produção de hoje e a proposta da #508.
+- **Tela financeira:** sem nome de modelo nos rótulos (regra da tela). A parte do Haiku
+  da comparação fica dentro do gasto de produção que a tela mede, e o texto explica isso.
+
+**O que custa.** Nada na AWS. No GitHub, duas leituras a cada 5 minutos com a tela
+aberta: os comentários da #508 e a lista de issues. O link "Dar notas" tem cerca de 6 mil
+caracteres, abaixo do limite do GitHub; por isso o relato vai só na primeira linha de
+cada caso.
+
+## 2026-11-16: a tela QA
+
+**Decisão (Nicole).** O QA da Maria entra no Visor numa tela própria (`/qa`,
+visor-maria#10). Ela mostra o gasto e o que o QA pegou para acertar, sem repetir
+o que as outras telas já mostram:
+
+- a contagem das execuções do CI ("Testes a cada mudança") continua na Agora, no
+  Sistema e no Relatório do dia; o QA mostra só o que foi conferido, conferência
+  por conferência;
+- o gasto total do release continua no Relatório da Aplicação; o QA mostra o gasto
+  de cada rodada, contra o teto de US$ 0,10 por rodada da staging.
+
+As fontes são só do GitHub: o log do job `ponta_a_ponta` do CI (maria-langgraph-pp
+#502), os comentários "QA da staging" nos PRs para a staging e os alertas abertos
+do CodeQL. Um defeito fica resolvido na primeira rodada seguinte que passa inteira:
+do mesmo PR, no ponta a ponta; qualquer uma, no QA da staging. A tela usa a largura
+toda, como a Agora e a Infra, porque as tabelas pedem espaço.
+
+**Por quê.** O QA precisa ter o gasto e mostrar o que deu defeito para acertar.
+
+**O que custa.** Nada na AWS. No GitHub, uma leitura dos jobs por execução do CI
+desde 13/11 (o que uma execução terminada disse fica guardado) e uma por PR para a
+staging, a cada 5 minutos com a tela aberta. O gasto da staging é o que o roteiro
+somou no preço do Haiku, o teto seguro (o Qwen do release custa menos). Quando a
+depuração com IA (maria-langgraph-pp #503) existir, o gasto dela entra aqui.
+
+## 2026-11-16: o release é lido em São Paulo
+
+**Decisão (Nicole).** O release da Maria passou para `sa-east-1` em 16/11 e o da
+Virgínia foi desligado (maria-langgraph-pp, `docs/infra-sa-east-1.md`, #463 e
+#500). O Visor lê cada ambiente na região dele (`fontes.REGIAO`): produção na
+Virgínia, release em São Paulo, com os nomes terminados em `-sp` (grupo de logs,
+cluster, serviço, target group, banco, NAT) e o modelo Qwen. O CloudFront, a
+Lambda do e-mail, os alarmes de `infra/alertas` e o gasto de IA da tela
+financeira continuam lidos na Virgínia.
+
+**Por quê.** Com o grupo de logs do release apagado na Virgínia, toda leitura do
+release voltava recusada, não ficava no cache e era refeita a cada troca de
+tela: a credencial do release levava cerca de 60 s por tela.
+
+**O que custa.** Os 30 dias de logs do release na Virgínia saíram junto com o
+grupo: o histórico do release começa em 11/11, quando o de São Paulo foi criado.
+O Terraform de `infra/alertas` (ainda não aplicado) aponta o release da
+Virgínia, e o gasto do Qwen não entra na tela financeira.
+
+## 2026-11-10: a regra 4 passa a ser "nunca identificar a conversa"
+
+**Decisão (Nicole).** Para entender os bugs, a tela Atendimento mostra uma linha
+por ocorrência de problema, e não só contagens. A regra 4 ("nunca listar
+conversa") passa a ser "nunca identificar a conversa": nenhuma linha traz
+`chatId`, telefone, IP ou texto digitado.
+
+**O que cada linha traz.** A hora; o tipo; a etapa (a rota, com o `chatId` do
+caminho trocado por `:chatId`, a consulta ao Verde, a função de IA); o fluxo; o
+código (status HTTP, tipo da exceção, `tipoErro`; nunca a mensagem da exceção, que
+pode levar dado digitado); a demora; a tentativa; e o que aconteceu com a
+conversa depois (encerrou, com o motivo; seguiu; expirou; parou; já estava
+encerrada). O `reqId` da requisição entra na consulta sugerida para o Logs
+Insights: é aleatório e não diz de quem é a conversa.
+
+**Como o "depois" sai sem identificar ninguém.** O `chatId` volta da consulta
+para a fonte (`dados/real.py`, `ocorrencias`), que busca o encerramento, a
+expiração e a última resposta de cada conversa, em lotes de 150, e o descarta:
+ele não entra no que a fonte devolve, nem no cache, nem na tela. Um teste confere
+(`tests/test_problemas_e_infra.py`).
+
+**Os tipos.** Erro da Maria (5xx), resposta depois de 30 s (o corte do
+CloudFront, #344), falha dentro do fluxo, falha do email ao NUDECON, o Verde
+falhou (sem contar a pessoa ou o processo que não existem), a IA falhou, o
+WhatsApp falhou, conversa cortada, triagem que se contradisse e pedido recusado
+(4xx). A varredura de robô (`/webhooks`, `/.env`) fica de fora.
+
+**Levantamento de 10/11, produção, de 23/10 (corte de versão) a 10/11.** 306
+ocorrências em 91 conversas: 208 do Verde (198 sem resposta em 30 s), 83
+respostas que passaram de 30 s (56 delas perto de 90 s, as 3 tentativas ao Verde
+da #172), 10 pedidos recusados (409 e 404) e as 5 conversas cortadas no corte.
+Picos às 16h e às 9h. No release, 10 em 7 dias: recusas e uma falha do email (429).
+
+**Os graves, um a um (Nicole, mesmo dia).** Em vez de um número só, um cartão por
+tipo grave (erro da Maria, resposta depois de 30 s, falha dentro do fluxo, email
+ao NUDECON), com a última vez, onde, o código, o fluxo, a demora, o pico, o que
+aconteceu depois e o motivo do encerramento; "Ver na lista" escolhe o tipo no filtro.
+Os quatro aparecem sempre, mesmo sem ocorrência ("nenhum").
+
+**Para a tela não demorar nem ficar apagada (mesmo dia).** A tela abre sem esperar
+os problemas (espera até 1,5 s; depois disso, o quadro diz que está lendo e se
+preenche sozinho); os pedidos e os eventos são consultados juntos (a leitura fria
+caiu de cerca de 9 s); o quadro tem relógio próprio de 5 minutos, a validade da
+leitura, e não refaz a lista a cada minuto; e a lista começa nas 100 mais novas
+(com 300, eram cerca de 300 KB por volta).
+
+**O que custa.** Duas consultas ao trecho da origem por leitura, mais uma por lote
+de conversas, relidas a cada 5 minutos com a tela aberta. Em produção, cerca de
+4,5 MB de logs por dia de janela (medido em 10/11: 31 MB em 7 dias).
+
+## 2026-11-10: a tela Infra
+
+**Pedido (Nicole).** Uma aba só para a infraestrutura da AWS: a instabilidade e a
+saúde dela, em produção e no release (homologação).
+
+**O que mostra.** A saúde agora nos dois ambientes lado a lado (a única parte sem
+filtro de ambiente); a instabilidade por dia em 14 dias (clique num dia); os
+trechos de horas seguidas com problema, do mais novo; cada parte hora a hora, na
+cor do estado, com os picos; e os gráficos da entrada, do tempo de resposta, dos
+containers, do banco e dos serviços de fora. Usa a largura toda, como a Agora.
+
+**As partes e as fontes.** Entrada (CloudFront `E3AYMLBF0ZRZL3` em produção e
+`EMY0HA3227AG0` no release, pela quantidade de pedidos em 7 dias: 4.107 e 286);
+tempo de resposta (p99 do balanceador e as respostas acima de 30 s nos logs);
+containers (no ar, CPU, memória e reinícios); e, os mesmos nos dois ambientes, o
+banco (`maria-chat-prod-pg`), a saída para a internet (NAT), o modelo de IA e a
+função de email. O Verde entra pelo que a Maria registrou. Tudo com
+`GetMetricData` (uma chamada por leitura) e uma consulta de logs.
+
+**Os limites de cada hora (para começar, ajustáveis em `dados/modelo.py`).**
+Entrada: instável com 1 erro 5xx, com problema com 5 ou 5% dos pedidos. Tempo:
+instável a partir de 10 s de p99, com problema a partir de 30 s ou com uma
+resposta cortada. Containers: com problema sem nenhum no ar; instável com menos
+que o desejado, reinício, CPU de 80% ou memória de 90%. Banco: CPU de 60% e 80%.
+Saída: instável com 1 erro, com problema com 100. Verde: 1 e 5 falhas. Modelo de
+IA: 1 e 10 recusas. Email: com problema com 1 erro.
+
+**Levantamento de 10/11, produção, 14 dias.** 60 respostas 5xx no CloudFront, 59
+respostas cortadas aos 30 s, 147 falhas do Verde e 2 reinícios. O p99 chegou a
+29 s; o banco não passou de 44% de CPU. Os trechos com problema coincidem com o
+Verde sem resposta (09/11, das 16h às 18h: 16 falhas, 6 respostas cortadas e 6
+erros 5xx).
+
+**O que custa.** Com a tela aberta: cerca de 20 métricas por leitura, relidas a cada
+5 minutos (24 horas) e 15 minutos (14 dias), e duas consultas de logs de uma linha
+por hora. Abaixo de US$ 1 por mês nas 88 horas de uso.
+
+## 2026-11-09: Credencial com os gráficos embaixo, vencimento e causa dos incidentes
+
+**Decisão (Nicole).** Na tela Credencial:
+
+- "Consultas ao Verde" e "A que horas a conferência rodou" saem da coluna da direita
+  (até 440 px) e vão para o fim da tela, na largura inteira, com todo dia no eixo e,
+  na conferência, toda hora de 8h a 19h. A Credencial deixa de ter coluna da direita
+  e ocupa a largura toda do monitor, sem o limite de 1180 px das outras telas.
+- Acima dos dois gráficos, um filtro só para eles: Dias (os últimos 30, um por dia) ou
+  Mês (a lista de meses desde setembro de 2026, e o gráfico mostra os dias do mês). A AWS
+  guarda os logs por 30 dias (retenção conferida em 09/11 nos dois grupos): no Verde, o
+  mês aparece só a partir do dia que os logs alcançam, com o aviso, e um mês que já saiu
+  deles diz isso em vez de mostrar zero. A conferência vem do GitHub e mostra o mês
+  inteiro. Mês fechado fica guardado sem prazo. Retenção mantida em 30 dias (Nicole).
+- A linha do tempo vira tabela: data, hora, tipo, vencimento e o que aconteceu. O
+  vencimento é até quando valia a credencial do evento. A conferência diária lê o
+  segredo antes de renovar, então o vencimento da credencial renovada é o da
+  conferência do dia seguinte; no dia da renovação, a célula diz "na próxima conferência".
+- Os incidentes ganham data e hora em colunas separadas, a causa, as conversas que
+  bateram na recusa (antes "não medido") e, só em produção, a marca "atinge o público".
+
+**Como sai a causa** (`linha_do_tempo.causa`): uma renovação do mesmo ambiente sem
+container novo, de 3 horas antes a 1 hora depois da primeira recusa, é "container com a
+credencial antiga"; senão, a validade da última conferência antes da recusa diz se a
+credencial estava vencida ou no prazo; sem conferência antes, "sem validade conferida".
+Nos 30 dias até 09/11: produção, 22/10, container com a credencial antiga (91
+atendimentos); produção, 20/10, e release, 29/10, recusa no prazo; release, 22/10, sem
+validade conferida (a conferência do release falhava desde 28/09).
+
+**O que custa.** As conversas afetadas saem da mesma consulta que já achava o horário
+exato de cada incidente (`count_distinct(chatId)`, que não sai da consulta). O cache
+subiu para a versão 3, porque a credencial guardada mudou de forma: a primeira leitura
+depois de atualizar é refeita.
+
+## 2026-11-05: as outras telas são montadas por trás
+
+**Decisão.** Ao abrir o painel, e ao trocar de tela, as telas que não estão abertas
+são montadas por trás, uma de cada vez (`dados/telas.py`, `aquecer`). De novo só depois
+de 30 minutos (`VENCIDA_AINDA_SERVE`): antes disso, a leitura guardada ainda aparece na
+hora.
+
+**Motivo.** Pedido da Nicole: trocar de tela ainda estava lento. A decisão de 26/10
+resolve a segunda visita, mas de manhã, ou depois de meia hora numa tela só, o
+primeiro clique em cada tela esperava as consultas dela. Medido em 05/11, com dados
+reais e o cache como estaria de manhã, clicando assim que a Agora aparece: antes, de
+2,7 a 6,6 s por tela (Fluxos, a pior); depois, de 0,5 a 3,1 s. Com alguns segundos na
+Agora antes do primeiro clique, todas abaixo de 0,6 s.
+
+**O que custa.** As consultas de todas as telas, mesmo das que ninguém abrir, no
+máximo uma vez a cada 30 minutos, e só enquanto alguém navega: o relógio de uma aba
+parada não monta nada. Também os dias passados de todas as telas (`preparar`), uma vez
+só, porque ficam guardados sem prazo.
+
+**O que fica de fora.** A primeira tela que abre de manhã ainda leva uns 11 s; a
+leitura mais lenta é a da credencial, 9,5 s no GitHub.
+
 ## 2026-11-03: o quadro Alertas na Agora
 
 **Decisão (Nicole).** A Agora mostra os alertas, logo abaixo do caminho do atendimento:
@@ -78,7 +291,8 @@ Visor Maria. Informado por Nicole.
 **O que isso pede.** Hoje o Visor lê com a credencial pessoal de quem o roda: no
 mesmo dia, a usuária da Nicole perdeu a consulta aos logs da Maria (`logs:StartQuery`
 e `logs:FilterLogEvents` negados desde cerca de 16h; métricas e GitHub seguem) e
-todos os números que vêm dos logs pararam. Para ser o monitoramento, o Visor
+todos os números que vêm dos logs pararam. O Ícaro devolveu a permissão às 16:40,
+e as leituras voltaram na atualização seguinte. Para ser o monitoramento, o Visor
 precisa rodar na tarefa própria, com o papel só de leitura (README, Permissões),
 e não depender do login de uma pessoa.
 

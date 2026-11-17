@@ -26,7 +26,7 @@ from painel.componentes.blocos import Tom, aria, barra_rotulada, quadro, texto_d
 from painel.componentes.filtro_de_dia import Filtro
 from painel.componentes.formato import MESES, contagem, data_curta, dinheiro, numero, segundos
 from painel.dados import obter_fonte
-from painel.dados.fontes import DIAS_DOS_FLUXOS
+from painel.dados.fontes import DIAS_DOS_FLUXOS, ultimo_dia_do_mes
 from painel.dados.modelo import (
     FUSO,
     NOME_DO_AMBIENTE,
@@ -60,6 +60,8 @@ from painel.dados.telas import LeiturasDaAplicacao, ler_ja
 from painel.precos import total
 
 DESTAQUE = "origem_processo_nao_suportada"
+# Um dia no eixo de datas do Plotly, em milissegundos: um rótulo por dia nos gráficos largos.
+UM_DIA_MS = 86_400_000
 # O gráfico de texto escrito por chamada, na tela financeira: o clique escolhe a data do período.
 ID_DOS_ESCRITOS = "aplicacao-grafico-escritos"
 
@@ -230,7 +232,32 @@ def quadro_de_recursos(recursos: dict[Ambiente, Leitura[RecursosDoServico]], ago
 LEGENDA_DO_VERDE = [(campo, tom, nome) for campo, nome, tom, _ in RESULTADOS_DO_VERDE]
 
 
-def _verde_do_mes(dias: list[DiaDoVerde], ambiente: Ambiente, tema: str | None, escolha: Filtro = Filtro()) -> Any:
+def nome_do_mes(mes: date) -> str:
+    """ "outubro de 2026"."""
+    return f"{MESES[mes.month - 1]} de {mes.year}"
+
+
+def _mes_inteiro(figura: go.Figure, mes: date, meio_dia: bool) -> None:
+    """O eixo mostra o mês todo, do dia 1 ao último, mesmo nos dias sem dado.
+    `meio_dia`: as barras ficam ao meio dia (as consultas); senão, à 0h (a conferência)."""
+    meia = timedelta(hours=0 if meio_dia else 12)
+    inicio = datetime.combine(mes.replace(day=1), time(), tzinfo=FUSO) - meia
+    fim = datetime.combine(ultimo_dia_do_mes(mes) + timedelta(days=1), time(), tzinfo=FUSO) - meia
+    figura.update_xaxes(range=[inicio, fim])
+
+
+def _faltou_nos_logs(dias: list[date], mes: date) -> str:
+    """O aviso, quando o começo do mês já saiu dos 30 dias de logs."""
+    if not dias or dias[0] <= mes.replace(day=1):
+        return ""
+    return f" Os logs guardam 30 dias: {MESES[mes.month - 1]} aparece a partir de {data_curta(dias[0])}."
+
+
+def _verde_do_mes(
+    dias: list[DiaDoVerde], ambiente: Ambiente, tema: str | None, escolha: Filtro = Filtro(), largo: bool = False, mes: date | None = None
+) -> Any:
+    """As consultas ao Verde dia a dia. `largo`, para a largura inteira da tela: todo
+    dia no eixo. `mes`, o mês escolhido no gráfico; sem ele, os últimos 30 dias."""
     c = graficos.cores(tema)
     figura = go.Figure()
     x = [datetime.combine(d.dia, time(12), tzinfo=FUSO) for d in dias]
@@ -239,26 +266,33 @@ def _verde_do_mes(dias: list[DiaDoVerde], ambiente: Ambiente, tema: str | None, 
             x=x, y=[getattr(d, campo) for d in dias], marker_color=c[cor], name=rotulo, hovertemplate=f"%{{x|%d/%m}}: %{{y}}, {rotulo.lower()}<extra></extra>"
         )
     figura.update_layout(barmode="stack")
-    figura.update_xaxes(tickformat="%d/%m")
+    figura.update_xaxes(tickformat="%d/%m", dtick=UM_DIA_MS if largo else None)
     if ambiente is Ambiente.PRODUCAO:
         graficos.marcar_corte_de_versao(figura, x[0], x[-1], c["suave"])
+    if mes is not None:
+        _mes_inteiro(figura, mes, meio_dia=True)
+    janela = "em 30 dias" if mes is None else f"em {MESES[mes.month - 1]}"
     resultado = escolha.resultado_do_verde
     campo = resultado or "recusadas"
     com = [d for d in dias if getattr(d, campo)]
     nome = filtro_de_dia.nome_da_serie(campo)
     if resultado is None:
-        resumo = "Nenhuma recusa da credencial em 30 dias." if not com else f"{numero(sum(d.recusadas for d in com))} recusas em {len(com)} dias."
+        resumo = f"Nenhuma recusa da credencial {janela}." if not com else f"{numero(sum(d.recusadas for d in com))} recusas em {len(com)} dias."
     else:
-        resumo = f"{nome}: nenhuma em 30 dias." if not com else f"{nome}: {numero(sum(getattr(d, campo) for d in com))}, em {len(com)} dias."
+        resumo = f"{nome}: nenhuma {janela}." if not com else f"{nome}: {numero(sum(getattr(d, campo) for d in com))}, em {len(com)} dias."
+    if mes is not None:
+        resumo += _faltou_nos_logs([d.dia for d in dias], mes)
     figura = filtro_de_dia.destacar(figura, escolha, tema, filtro_de_dia.SERIES_DO_VERDE)
     return [
-        _mini(figura, tema, 180, clicavel=("credencial", "verde-do-mes"), series=filtro_de_dia.SERIES_DO_VERDE),
+        _mini(figura, tema, 300 if largo else 180, clicavel=("credencial", "verde-do-mes"), series=filtro_de_dia.SERIES_DO_VERDE),
         filtro_de_dia.legenda("credencial", LEGENDA_DO_VERDE, resultado),
         html.P(resumo, className="lateral-resumo"),
     ]
 
 
-def _horarios(horarios: list[HorarioDaConferencia], tema: str | None, dia: date | None = None) -> Any:
+def _horarios(horarios: list[HorarioDaConferencia], tema: str | None, dia: date | None = None, largo: bool = False, mes: date | None = None) -> Any:
+    """A hora em que cada conferência começou. `largo`, para a largura inteira da
+    tela: todo dia e toda hora no eixo. `mes`, o mês escolhido no gráfico."""
     c = graficos.cores(tema)
     figura = go.Figure()
     figura.add_scatter(
@@ -270,14 +304,17 @@ def _horarios(horarios: list[HorarioDaConferencia], tema: str | None, dia: date 
         hovertemplate="%{customdata}<extra></extra>",
     )
     figura.add_hline(y=9, line_dash="dot", line_color=c["suave"], annotation_text="agendada às 9h", annotation_font_color=c["suave"])
-    figura.update_yaxes(range=[8, 17], tickvals=[9, 12, 15], ticktext=["9h", "12h", "15h"])
-    figura.update_xaxes(tickformat="%d/%m")
+    horas = list(range(8, 20)) if largo else [9, 12, 15]
+    figura.update_yaxes(range=[8, 19.5] if largo else [8, 17], tickvals=horas, ticktext=[f"{h}h" for h in horas])
+    figura.update_xaxes(tickformat="%d/%m", dtick=UM_DIA_MS if largo else None)
+    if mes is not None:
+        _mes_inteiro(figura, mes, meio_dia=False)
     atrasos = [(h.comecou.hour * 60 + h.comecou.minute) - 9 * 60 for h in horarios]
     resumo = ""
     if atrasos:
         resumo = f"Começou entre {min(atrasos) // 60}h{min(atrasos) % 60:02d} e {max(atrasos) // 60}h{max(atrasos) % 60:02d} depois do agendado."
     return [
-        _mini(filtro_de_dia.destacar(figura, dia, tema), tema, clicavel=("credencial", "horarios")),
+        _mini(filtro_de_dia.destacar(figura, dia, tema), tema, 320 if largo else 170, clicavel=("credencial", "horarios")),
         _legenda([("bom", "passou"), ("ruim", "falhou")]),
         html.P(resumo, className="lateral-resumo"),
     ]
@@ -351,27 +388,32 @@ def _quando(quando: date | None, agora: datetime) -> str:
     return "hoje" if quando is None or quando == agora.date() else f"em {filtro_de_dia.rotulo(quando)}"
 
 
-def da_credencial(tema: str | None, escolha: Filtro = Filtro()) -> list[Any]:
+def graficos_da_credencial(tema: str | None, escolha: Filtro = Filtro(), mes: date | None = None) -> list[Any]:
+    """A Credencial não tem coluna da direita: estes dois gráficos ficam no fim da
+    tela, na largura inteira, com todo dia no eixo (pedido de 09/11). `mes`, o mês
+    escolhido acima deles; sem ele, os últimos 30 dias."""
     fonte, agora = obter_fonte(), datetime.now(FUSO)
-    verde = ler_ja(partial(fonte.verde_do_mes, Ambiente.PRODUCAO))
-    horarios = ler_ja(fonte.horarios_da_conferencia)
+    verde = ler_ja(partial(fonte.verde_do_mes, Ambiente.PRODUCAO, mes))
+    horarios = ler_ja(partial(fonte.horarios_da_conferencia, mes))
+    janela = "30 dias" if mes is None else nome_do_mes(mes)
     return [
-        _titulo_da_lateral(),
         bloco(
-            "Consultas ao Verde, 30 dias",
+            f"Consultas ao Verde, {janela}",
             verde.result(),
-            lambda v: _verde_do_mes(v, Ambiente.PRODUCAO, tema, escolha),
-            "Ninguém consultou o Verde nos últimos 30 dias.",
+            lambda v: _verde_do_mes(v, Ambiente.PRODUCAO, tema, escolha, largo=True, mes=mes),
+            "Ninguém consultou o Verde nos últimos 30 dias."
+            if mes is None
+            else f"Os logs guardam 30 dias: {MESES[mes.month - 1]} já saiu deles, e não há consulta para mostrar.",
             agora,
             lateral="produção; clique num dia ou na legenda",
         ),
         bloco(
-            "A que horas a conferência rodou",
+            f"A que horas a conferência rodou, {janela}",
             horarios.result(),
-            lambda v: _horarios(v, tema, escolha.dia),
-            "Nenhuma conferência agendada rodou em 30 dias.",
+            lambda v: _horarios(v, tema, escolha.dia, largo=True, mes=mes),
+            "Nenhuma conferência agendada rodou em 30 dias." if mes is None else f"Nenhuma conferência agendada rodou em {nome_do_mes(mes)}.",
             agora,
-            lateral="30 dias; clique num dia",
+            lateral="clique num dia",
         ),
     ]
 

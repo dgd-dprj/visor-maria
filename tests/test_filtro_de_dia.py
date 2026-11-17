@@ -222,7 +222,10 @@ def _montagens(escolha: Filtro) -> dict[str, Any]:
         "Observatório da IA": ia["_corpo"](ia["ler_ia"](Ambiente.PRODUCAO, escolha.quando), None),
         "Agora, de hora em hora": list(agora["_sinais"](None, escolha)),
         "Agora, o caminho do atendimento": agora["caminho_do_atendimento"](agora["ler_agora"](escolha.quando)),
-        "Mais sinais, Credencial": lateral.da_credencial(None, escolha),
+        "Gráficos da Credencial": lateral.graficos_da_credencial(None, escolha),
+        # O mês corrente e um que já saiu dos 30 dias de logs (o Verde fica vazio).
+        "Gráficos da Credencial, mês": lateral.graficos_da_credencial(None, escolha, AGORA.date().replace(day=1)),
+        "Gráficos da Credencial, mês antigo": lateral.graficos_da_credencial(None, escolha, date(2026, 9, 1)),
         "Mais sinais, Atendimento": lateral.do_atendimento(Origem.PRODUCAO_PY, None, escolha),
         "Mais sinais, Sistema": lateral.do_sistema(Ambiente.PRODUCAO, None, escolha),
         "Mais sinais, Relatório do dia": lateral.do_dia(None, escolha),

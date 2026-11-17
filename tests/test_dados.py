@@ -65,7 +65,8 @@ def test_cada_ambiente_le_o_seu_grupo_de_logs() -> None:
     producao = fonte.resumo_do_dia(Ambiente.PRODUCAO).fonte.identificador
     release = fonte.resumo_do_dia(Ambiente.RELEASE).fonte.identificador
     assert producao.startswith("/ecs/maria-langgraph-pp/api,")
-    assert release.startswith("/ecs/maria-langgraph-pp-release/api,")
+    assert release.startswith("/ecs/maria-langgraph-pp-release-sp/api,")
+    assert (fontes.REGIAO[Ambiente.PRODUCAO], fontes.REGIAO[Ambiente.RELEASE]) == ("us-east-1", "sa-east-1")
 
 
 def test_o_grafico_do_verde_tem_oito_dias_terminando_hoje() -> None:
@@ -99,3 +100,31 @@ def test_nada_le_o_banco_antes_da_309() -> None:
 def test_cenario_desconhecido_falha_logo() -> None:
     with pytest.raises(ValueError):
         FonteSimulada("otimista")
+
+
+# ── O mês escolhido nos gráficos da Credencial ────────────────────────────
+
+
+def test_o_mes_do_verde_so_traz_o_que_os_logs_guardam() -> None:
+    from datetime import timedelta
+
+    from painel.dados.modelo import FUSO
+
+    agora = datetime.now(FUSO)
+    fonte = FonteSimulada()
+    este_mes = fonte.verde_do_mes(Ambiente.PRODUCAO, agora.date().replace(day=1))
+    assert este_mes.estado is Estado.OK and este_mes.valor
+    assert all(fontes.primeiro_dia_nos_logs(agora) <= d.dia <= agora.date() for d in este_mes.valor)
+    # Três meses atrás, o mês inteiro já saiu dos 30 dias de logs.
+    antigo = (agora.date().replace(day=1) - timedelta(days=80)).replace(day=1)
+    assert fonte.verde_do_mes(Ambiente.PRODUCAO, antigo).estado is Estado.VAZIO
+    assert "/" in fonte.verde_do_mes(Ambiente.PRODUCAO, antigo).fonte.nome
+
+
+def test_o_grafico_do_mes_avisa_quando_o_comeco_saiu_dos_logs() -> None:
+    from painel import lateral
+
+    mes = date(2026, 10, 1)
+    dias = [date(2026, 10, d) for d in range(11, 32)]
+    assert "outubro aparece a partir de 11/10" in lateral._faltou_nos_logs(dias, mes)
+    assert lateral._faltou_nos_logs([date(2026, 11, d) for d in range(1, 10)], date(2026, 11, 1)) == ""

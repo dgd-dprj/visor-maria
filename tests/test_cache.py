@@ -162,3 +162,21 @@ def test_arquivo_estragado_conta_como_ausente(tmp_path: Path) -> None:
 def test_fim_do_mes_vira_o_ano() -> None:
     assert fim_do_mes(date(2026, 12, 1)) == datetime(2027, 1, 1, 1, 0, tzinfo=FUSO)
     assert fim_do_mes(date(2026, 2, 1)) == datetime(2026, 3, 1, 1, 0, tzinfo=FUSO)
+
+
+def test_as_outras_telas_sao_montadas_por_tras_no_maximo_a_cada_meia_hora(monkeypatch: pytest.MonkeyPatch) -> None:
+    from painel.dados import telas
+
+    monkeypatch.setattr(telas, "_aquecido_em", None)
+    montadas: list[str] = []
+
+    def falha() -> None:
+        raise RuntimeError("tela quebrada")
+
+    agora = datetime(2026, 11, 5, 8, 0, tzinfo=FUSO)
+    assert telas.aquecer([lambda: montadas.append("credencial"), falha, lambda: montadas.append("fluxos")], agora)
+    assert not telas.aquecer([lambda: montadas.append("de novo")], agora + VENCIDA_AINDA_SERVE - timedelta(seconds=1))
+    assert telas.aquecer([lambda: montadas.append("meia hora depois")], agora + VENCIDA_AINDA_SERVE)
+    telas._AQUECIMENTO.submit(lambda: None).result()
+    # Uma tela que falha não impede as outras.
+    assert montadas == ["credencial", "fluxos", "meia hora depois"]

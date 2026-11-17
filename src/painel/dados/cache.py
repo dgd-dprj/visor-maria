@@ -40,7 +40,7 @@ from painel.dados.modelo import FUSO, Estado, Leitura
 registro = logging.getLogger(__name__)
 
 # Mudou a forma de algum tipo guardado (dados/modelo.py)? Suba este número.
-VERSAO = 2
+VERSAO = 3
 VENCIDA_AINDA_SERVE = timedelta(minutes=30)
 # As leituras por trás têm o seu próprio conjunto, abaixo do limite de consultas
 # simultâneas do Logs Insights, como as leituras das telas (dados/telas.py).

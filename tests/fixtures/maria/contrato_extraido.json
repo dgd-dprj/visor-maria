@@ -2,10 +2,20 @@
   "origem": {
     "repositorio": "dgd-dprj/maria-langgraph-pp",
     "branch": "develop",
-    "commit": "7c2fb3cc81d604e68ee9a423edaa7e1fba55581e",
-    "extraido_em": "2026-10-28"
+    "commit": "2cac5f0b1783cca9246511f1911a27d333caef12",
+    "extraido_em": "2026-11-10"
   },
   "eventos": {
+    "assunto_guardado_aberto": [
+      "chatId",
+      "flowId"
+    ],
+    "assunto_guardado_redirecionado": [
+      "chatId",
+      "destino",
+      "status",
+      "tipoCaso"
+    ],
     "atendimento_criado": [
       "chatId",
       "fluxoId"
@@ -25,6 +35,24 @@
     "atendimento_sem_checkpoint": [
       "chatId",
       "fluxoId"
+    ],
+    "email_nudecon_enviado": [
+      "anexosFalhos",
+      "protocolo",
+      "status",
+      "tentativa"
+    ],
+    "email_nudecon_falha": [
+      "motivo",
+      "protocolo",
+      "status",
+      "tentativa",
+      "tipoErro"
+    ],
+    "fluxos_ligados": [
+      "ambiente",
+      "fluxosEmTesteDesligados",
+      "fluxosLigados"
     ],
     "orquestrador_finalizado_sem_fluxo": [
       "chatId",
@@ -68,6 +96,16 @@
       "tipoResposta",
       "tokensGastosTotal",
       "viaIA"
+    ],
+    "proximo_assunto_aberto": [
+      "chatId",
+      "flowId",
+      "posicao"
+    ],
+    "proximo_assunto_redirecionado": [
+      "chatId",
+      "posicao",
+      "tipoCaso"
     ],
     "resposta_recebida": [
       "chatId",

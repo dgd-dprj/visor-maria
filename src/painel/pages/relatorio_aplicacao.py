@@ -994,11 +994,95 @@ LIMITES = html.Div(
 )
 
 
+# ── Fora do atendimento: avaliações de IA e QA (16/11) ────────────────────
+
+
+def _fora_do_atendimento(dados: LeiturasDaAplicacao) -> html.Section:
+    """O gasto de IA que não é de atendimento: a comparação de tom (#508) e as rodadas do QA da staging.
+    O detalhe fica no Observatório da IA e na tela QA; aqui, só quanto custou."""
+    leituras = [leitura for leitura in (dados.tom, dados.qa) if leitura is not None]
+    titulo = "Gasto fora do atendimento"
+    linhas: list[Any] = []
+    total = 0.0
+    tom = dados.tom.valor if dados.tom is not None and dados.tom.estado is Estado.OK else None
+    if tom is not None:
+        total += tom.custo
+        linhas.append(
+            html.Tr(
+                [
+                    html.Td("Comparação do jeito de a IA falar: o modelo de hoje e o novo"),
+                    html.Td(data_curta(tom.rodado_em), className="mono"),
+                    html.Td(dinheiro(tom.custo, 4), className="numero"),
+                    html.Td("Observatório da IA"),
+                ]
+            )
+        )
+    qa = dados.qa.valor if dados.qa is not None and dados.qa.estado is Estado.OK else None
+    if qa is not None:
+        da_staging = [r for r in qa.rodadas if r.tipo == "staging"]
+        custo = sum(r.custo for r in da_staging)
+        total += custo
+        desde = min((r.quando for r in da_staging), default=None)
+        linhas.append(
+            html.Tr(
+                [
+                    html.Td(f"Testes no ambiente de homologação, {len(da_staging)} rodadas"),
+                    html.Td(f"desde {data_curta(desde)}" if desde else "nenhuma ainda", className="mono"),
+                    html.Td(dinheiro(custo, 4), className="numero"),
+                    html.Td("QA"),
+                ]
+            )
+        )
+        linhas.append(
+            html.Tr(
+                [
+                    html.Td("Teste automático a cada mudança"),
+                    html.Td("a cada mudança", className="mono"),
+                    html.Td("sem gasto (simulado)", className="numero"),
+                    html.Td("QA"),
+                ]
+            )
+        )
+    faltou = [leitura for leitura in leituras if leitura.estado is Estado.INDISPONIVEL]
+    if not linhas:
+        corpo: Any = texto_de_falha(faltou[0]) if faltou else html.P("Nenhuma avaliação nem rodada de QA ainda.", className="texto-vazio")
+        return quadro(titulo, corpo, leituras, dados.agora)
+    tabela = html.Table(
+        [
+            html.Thead(html.Tr([html.Th("O quê"), html.Th("Quando"), html.Th("Gasto de IA", className="numero"), html.Th("Detalhe na tela")])),
+            html.Tbody(linhas),
+            html.Tfoot(html.Tr([html.Th("Total", scope="row"), html.Td(""), html.Td(dinheiro(total, 4), className="numero"), html.Td("")])),
+        ],
+        className="tabela",
+    )
+    pecas: list[Any] = [tabela]
+    if tom is not None:
+        haiku = next((v.custo for v in tom.versoes if v.versao == "haiku"), 0.0)
+        pecas.append(
+            html.P(
+                f"A parte da comparação feita com o modelo de hoje ({dinheiro(haiku, 4)}) está dentro do gasto de produção desta tela, porque "
+                "usou a mesma conta e o mesmo modelo. O modelo novo roda em São Paulo e fica fora dela. Os valores da comparação e dos testes "
+                "estão no preço do modelo de hoje, o mais caro: o gasto real é igual ou menor.",
+                className="texto-detalhe",
+            )
+        )
+    if faltou:
+        pecas.append(html.P(f"Faltou ler: {', '.join(leitura.fonte.nome for leitura in faltou)}.", className="texto-aviso"))
+    return quadro(titulo, html.Div(pecas, className="miolo"), leituras, dados.agora, lateral="avaliações de IA e QA")
+
+
 # ── Montagem ──────────────────────────────────────────────────────────────
 
 
 def _antes(dados: LeiturasDaAplicacao, tema: str | None) -> list[Any]:
-    return [_indicadores(dados), _origem(dados), _de_quem(dados, tema), _quadro_dos_dias(dados, tema), _quadro_dos_meses(dados, tema)]
+    return [
+        _indicadores(dados),
+        _origem(dados),
+        _de_quem(dados, tema),
+        _fora_do_atendimento(dados),
+        _quadro_dos_dias(dados, tema),
+        _quadro_dos_meses(dados, tema),
+    ]
 
 
 def _depois(dados: LeiturasDaAplicacao) -> list[Any]:

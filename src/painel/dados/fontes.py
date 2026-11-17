@@ -11,12 +11,14 @@ banco: a #309 bloqueia o banco como fonte. Nada lê o segredo da credencial.
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Protocol
 
 from painel.dados.modelo import (
     AMBIENTE_DA_ORIGEM,
+    QA,
     Alarme,
+    AlertaDeCodigo,
     Ambiente,
     ContagemPorDia,
     ContagemPorHora,
@@ -36,10 +38,12 @@ from painel.dados.modelo import (
     Fonte,
     GastoDeIA,
     GastoDoAssunto,
+    HoraDaInfra,
     HorarioDaConferencia,
     IncidenteDeCredencial,
     Leitura,
     MudancaNaIA,
+    OcorrenciasDoPeriodo,
     Origem,
     OrigemNaoAtendida,
     ProblemaNoDia,
@@ -58,23 +62,43 @@ from painel.dados.modelo import (
     TempoDeResposta,
     TokensDoDia,
     TokensRegistrados,
+    TomDaIA,
     TrechoDeNaoEncontrado,
     UsoDaIA,
 )
 
+# Produção segue na Virgínia. O release passou para São Paulo em 16/11, com os
+# nomes terminados em -sp, e o da Virgínia foi desligado (maria-langgraph-pp,
+# docs/infra-sa-east-1.md, #463 e #500).
+REGIAO = {Ambiente.PRODUCAO: "us-east-1", Ambiente.RELEASE: "sa-east-1"}
+# O CloudFront e a Lambda do e-mail mandam as métricas só para a Virgínia, nos dois ambientes.
+REGIAO_GLOBAL = "us-east-1"
 GRUPO_DE_LOGS = {
     Ambiente.PRODUCAO: "/ecs/maria-langgraph-pp/api",
-    Ambiente.RELEASE: "/ecs/maria-langgraph-pp-release/api",
+    Ambiente.RELEASE: "/ecs/maria-langgraph-pp-release-sp/api",
 }
-SERVICO_ECS = {Ambiente.PRODUCAO: "api", Ambiente.RELEASE: "api-release"}
+CLUSTER = {Ambiente.PRODUCAO: "maria-langgraph-pp", Ambiente.RELEASE: "maria-langgraph-pp-sp"}
+SERVICO_ECS = {Ambiente.PRODUCAO: "api", Ambiente.RELEASE: "api-release-sp"}
 TARGET_GROUP = {
     Ambiente.PRODUCAO: "maria-langgraph-pp-api",
-    Ambiente.RELEASE: "maria-langgraph-pp-api-release",
+    Ambiente.RELEASE: "maria-langgraph-pp-release-sp",
 }
 LOGS_DO = {Ambiente.PRODUCAO: "logs de produção", Ambiente.RELEASE: "logs do release"}
 # Na tela financeira, para quem lê de finanças: o mesmo grupo de logs, sem a palavra técnica.
 REGISTRO_DO = {Ambiente.PRODUCAO: "registro da aplicação em produção", Ambiente.RELEASE: "registro da aplicação no release"}
+# A infraestrutura de cada ambiente (levantamento de 10/11, pelas métricas): a
+# distribuição do CloudFront de produção teve 4.107 pedidos em 7 dias, e a do release, 286.
+# A do release em São Paulo é a de cloudfront.tf (api_https_url_release_sp), em uso desde 16/11.
+DISTRIBUICAO = {Ambiente.PRODUCAO: "E3AYMLBF0ZRZL3", Ambiente.RELEASE: "E1ZY4LVRDV8EK3"}
+BANCO = {Ambiente.PRODUCAO: "maria-chat-prod-pg", Ambiente.RELEASE: "maria-chat-sp-pg"}
+PROXY_DO_BANCO = {Ambiente.PRODUCAO: "maria-chat-prod-proxy", Ambiente.RELEASE: "maria-chat-sp-proxy"}
+SAIDA_NAT = {Ambiente.PRODUCAO: "nat-0dc2b3f3dc8a5d353", Ambiente.RELEASE: "nat-02426cb2130abd20b"}
+# Uma função só, na Virgínia, para os dois ambientes.
+FUNCAO_DO_EMAIL = "maria-email-nudecon"
+# O modelo da produção, que a tela financeira cobra.
 MODELO_DE_CHAT = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+# Em São Paulo, o release usa o Qwen, para a inferência ficar no Brasil (terraform-sp, bedrock_model_id).
+MODELO_DO = {Ambiente.PRODUCAO: MODELO_DE_CHAT, Ambiente.RELEASE: "qwen.qwen3-vl-235b-a22b"}
 MODELO_DE_EMBEDDING = "amazon.titan-embed-text-v2:0"
 
 # O Logs Insights cobra pelo que varre, e as telas ficam abertas o dia todo:
@@ -84,6 +108,15 @@ DIAS_DO_CUSTO = 30
 # Os logs da aplicação guardam 30 dias (retention_in_days nos .tf de produção e do
 # release, develop em 26/10): antes disso, só as métricas.
 DIAS_DO_REGISTRO = 30
+
+
+def primeiro_dia_nos_logs(agora: datetime) -> date:
+    """O dia mais antigo que os logs ainda guardam inteiro: a retenção é de 30 dias."""
+    return (agora - timedelta(days=DIAS_DO_REGISTRO)).date() + timedelta(days=1)
+
+
+def ultimo_dia_do_mes(mes: date) -> date:
+    return (mes.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
 
 
 def _quando(padrao: str, dia: date | None) -> str:
@@ -170,7 +203,7 @@ def fonte_verde_por_dia(ambiente: Ambiente) -> Fonte:
 def fonte_incidentes() -> Fonte:
     return Fonte(
         curto="logs de produção e logs do release",
-        nome="Blocos de recusa da credencial (status 401 ou 403) nos 30 dias de logs",
+        nome="Blocos de recusa da credencial (status 401 ou 403) nos 30 dias de logs, com as conversas que bateram na recusa",
         identificador=f"{GRUPO_DE_LOGS[Ambiente.PRODUCAO]} e {GRUPO_DE_LOGS[Ambiente.RELEASE]}, evento verde_chamada",
         atraso="segundos",
     )
@@ -327,17 +360,22 @@ def fonte_cpu_e_latencia(dia: date | None = None) -> Fonte:
     )
 
 
-def fonte_horarios_da_conferencia() -> Fonte:
+def _no_mes(mes: date | None) -> str:
+    """ "nos últimos 30 dias", ou "em 10/2026", o mês escolhido no gráfico."""
+    return "nos últimos 30 dias" if mes is None else f"em {mes:%m/%Y}"
+
+
+def fonte_horarios_da_conferencia(mes: date | None = None) -> Fonte:
     return Fonte(
         curto="GitHub",
-        nome="Hora em que cada conferência diária começou, nos últimos 30 dias",
+        nome=f"Hora em que cada conferência diária começou, {_no_mes(mes)}",
         identificador="GitHub Actions, verificar-token-verde.yml (agendada para 0 12 * * *, 9h em Brasília)",
         atraso="minutos",
     )
 
 
-def fonte_verde_do_mes(ambiente: Ambiente) -> Fonte:
-    return _logs(ambiente, "consultas ao Verde por dia, últimos 30 dias", "evento verde_chamada, campos resultado e status")
+def fonte_verde_do_mes(ambiente: Ambiente, mes: date | None = None) -> Fonte:
+    return _logs(ambiente, f"consultas ao Verde por dia, {_no_mes(mes)}", "evento verde_chamada, campos resultado e status")
 
 
 def fonte_erros_da_ia(ambiente: Ambiente, dia: date | None = None) -> Fonte:
@@ -458,6 +496,87 @@ def fonte_envios_do_whatsapp(ambiente: Ambiente, dia: date | None = None) -> Fon
     )
 
 
+def fonte_ocorrencias(origem: Origem, dia: date | None = None) -> Fonte:
+    return _logs(
+        AMBIENTE_DA_ORIGEM[origem],
+        f"cada problema, com a hora, a etapa e o código, {_quando('no trecho da origem', dia)}",
+        'linhas "incoming request", "request completed" e de erro (err.type), ligadas pelo reqId; eventos verde_chamada (sem sucesso), '
+        "email_nudecon_falha, atendimento_sem_checkpoint, orquestrador_inconsistencia e whatsapp_*; linhas de erro das funções de IA; "
+        "e, para o que aconteceu depois, atendimento_finalizado, atendimento_expirado e resposta_recebida da mesma conversa (chatId, que não sai da fonte)",
+    )
+
+
+DIAS_DA_INFRA = 14
+
+
+def _fonte_infra(ambiente: Ambiente, quando: str) -> Fonte:
+    return Fonte(
+        curto=f"CloudFront, balanceador, ECS, RDS, NAT, Bedrock, Lambda e {LOGS_DO[ambiente]}",
+        nome=f"A infraestrutura hora a hora, {quando}",
+        identificador=(
+            f"AWS/CloudFront Requests, 5xxErrorRate e 4xxErrorRate, {DISTRIBUICAO[ambiente]}; "
+            f"AWS/ApplicationELB TargetResponseTime (p99) e HealthyHostCount, {TARGET_GROUP[ambiente]}; "
+            f"AWS/ECS CPUUtilization e MemoryUtilization e ECS/ContainerInsights DesiredTaskCount, serviço {SERVICO_ECS[ambiente]}; "
+            f"AWS/RDS CPUUtilization, DatabaseConnections e FreeableMemory, {BANCO[ambiente]}; "
+            f"AWS/NATGateway ErrorPortAllocation e PacketsDropCount, {SAIDA_NAT[ambiente]}; "
+            f"AWS/Bedrock InvocationClientErrors, InvocationServerErrors e InvocationThrottles, {MODELO_DO[ambiente]}; "
+            f"AWS/Lambda Errors e Throttles, {FUNCAO_DO_EMAIL}; região {REGIAO[ambiente]}; "
+            f'{GRUPO_DE_LOGS[ambiente]}, evento verde_chamada (sem sucesso), linhas "request completed" acima de 30 s e "Application startup complete."'
+        ),
+        atraso="cerca de 1 minuto",
+    )
+
+
+def fonte_infra_por_hora(ambiente: Ambiente, dia: date | None = None) -> Fonte:
+    return _fonte_infra(ambiente, _quando("nas últimas 24 horas", dia))
+
+
+def fonte_infra_por_dia(ambiente: Ambiente) -> Fonte:
+    return _fonte_infra(ambiente, f"juntada por dia, nos últimos {DIAS_DA_INFRA} dias")
+
+
+# O QA começou em 13/11 (o roteiro da staging); o ponta a ponta do CI, em 16/11 (#502).
+INICIO_DO_QA = date(2026, 11, 13)
+
+
+def fonte_qa() -> Fonte:
+    return Fonte(
+        curto="GitHub",
+        nome="Rodadas de QA desde 13/11: o ponta a ponta do CI e o resumo do QA da staging nos PRs para a staging",
+        identificador=(
+            'dgd-dprj/maria-langgraph-pp: ci.yml, job ponta_a_ponta (linhas "cenários OK" e "FALHOU" do log); '
+            'comentários "QA da staging" nos PRs com base staging (linhas "de N OK", "Custo de IA" e "❌")'
+        ),
+        atraso="minutos",
+    )
+
+
+def fonte_alertas_de_codigo() -> Fonte:
+    return Fonte(
+        curto="GitHub",
+        nome="Alertas abertos do CodeQL",
+        identificador="dgd-dprj/maria-langgraph-pp: code scanning, state=open (codeql.yml, #502)",
+        atraso="minutos",
+    )
+
+
+# O resultado da comparação de tom é publicado como comentário na #508, com o bloco de dados marcado.
+ISSUE_DO_TOM = 508
+MARCA_DO_TOM = "<!-- visor:tom-da-ia -->"
+
+
+def fonte_tom_da_ia() -> Fonte:
+    return Fonte(
+        curto="GitHub",
+        nome="Comparação do tom da pergunta de desambiguação (Haiku e Qwen) e as notas da equipe",
+        identificador=(
+            f'dgd-dprj/maria-langgraph-pp: comentário mais novo da #{ISSUE_DO_TOM} com "{MARCA_DO_TOM}" '
+            '(scripts/avaliacao/tom_desambiguacao.py); issues com título "[nota de tom]"'
+        ),
+        atraso="minutos",
+    )
+
+
 class FonteDeDados(Protocol):
     """As consultas com `dia` leem, com ele, aquele dia de Brasília, de 0h a 24h
     (ou até agora, se for hoje), em vez da janela padrão. É o filtro de dia das
@@ -521,9 +640,9 @@ class FonteDeDados(Protocol):
 
     def cpu_e_latencia(self, dia: date | None = None) -> Leitura[list[CpuELatencia]]: ...
 
-    def horarios_da_conferencia(self) -> Leitura[list[HorarioDaConferencia]]: ...
+    def horarios_da_conferencia(self, mes: date | None = None) -> Leitura[list[HorarioDaConferencia]]: ...
 
-    def verde_do_mes(self, ambiente: Ambiente) -> Leitura[list[DiaDoVerde]]: ...
+    def verde_do_mes(self, ambiente: Ambiente, mes: date | None = None) -> Leitura[list[DiaDoVerde]]: ...
 
     def erros_da_ia(self, ambiente: Ambiente, dia: date | None = None) -> Leitura[list[ErroDaIA]]: ...
 
@@ -558,3 +677,19 @@ class FonteDeDados(Protocol):
 
     # Relatório da Aplicação: atendimento humano
     def encaminhamentos_por_dia(self, ambiente: Ambiente) -> Leitura[list[EncaminhamentoNoDia]]: ...
+
+    # Atendimento: cada problema, uma linha por ocorrência
+    def ocorrencias(self, origem: Origem, dia: date | None = None) -> Leitura[OcorrenciasDoPeriodo]: ...
+
+    # Infra: hora a hora, nas últimas 24 horas ou no dia (ou hora) escolhido; e os 14 dias, hora a hora
+    def infra_por_hora(self, ambiente: Ambiente, dia: date | None = None) -> Leitura[list[HoraDaInfra]]: ...
+
+    def infra_por_dia(self, ambiente: Ambiente) -> Leitura[list[HoraDaInfra]]: ...
+
+    # QA: as rodadas (ponta a ponta do CI e QA da staging), os defeitos e o gasto; e os alertas do CodeQL
+    def qa(self) -> Leitura[QA]: ...
+
+    def alertas_de_codigo(self) -> Leitura[list[AlertaDeCodigo]]: ...
+
+    # Observatório da IA e Relatório da Aplicação: a comparação de tom mais nova e as notas da equipe
+    def tom_da_ia(self) -> Leitura[TomDaIA]: ...
