@@ -90,6 +90,44 @@ grupo: o histórico do release começa em 11/11, quando o de São Paulo foi cria
 O Terraform de `infra/alertas` (ainda não aplicado) aponta o release da
 Virgínia, e o gasto do Qwen não entra na tela financeira.
 
+## 2026-11-23: o Visor renova a credencial do Verde com 1 dia para vencer (issue #14)
+
+**Decisão (Ícaro).** O Visor ganha a renovação, e só a executa quando precisa:
+com 1 dia ou menos para o token vencer (ou vencido há menos de 5 dias, o grace
+period do Verde). Depois de renovar, grava o token novo em `VERDE_JWT_TOKEN`
+(segredo `maria-langgraph-pp-<amb>/app`) e força o redeploy do serviço ECS,
+porque a Maria só lê o token no boot. As demais credenciais seguem só no
+histórico.
+
+**Como.** `src/painel/renovador.py`, comando `python -m painel.renovador`
+(`--simular` só decide; `--ambiente` limita). Roda uma vez por dia, fora do
+servidor web: é o único código do Visor que lê e escreve o segredo, e a regra
+"o painel nunca lê o segredo" continua valendo para o resto.
+
+**Proteções.** Trava por ambiente (`visor-maria/trava-renovacao-<amb>`, criada
+de forma atômica; trava com mais de 15 min é de uma execução que morreu);
+releitura do segredo sob a trava; gravação com 5 tentativas; o token e o client
+id nunca vão para log, tela, cache ou mensagem de erro (só o tipo da exceção).
+Token revogado, fora do grace period ou resposta sem `token`: nada é gravado e o
+comando sai com erro.
+
+**Convivência com o workflow.** O `verificar-token-verde.yml` do
+maria-langgraph-pp (#187) renova com 7 dias ou menos, bem antes do 1 dia do
+Visor, então o Visor só age se o workflow falhar. Duas renovações ao mesmo
+tempo invalidariam o token uma da outra: o agendamento do Visor deve ficar
+desligado enquanto o workflow não for desativado, ou ligado só como rede de
+segurança, nunca rodando junto na mesma hora.
+
+**Permissão mínima do papel que roda o comando** (`sa-east-1`):
+`secretsmanager:GetSecretValue` e `PutSecretValue` em
+`maria-langgraph-pp-{prod,release}/app`; `secretsmanager:CreateSecret`,
+`DescribeSecret` e `DeleteSecret` em `visor-maria/trava-renovacao-*`;
+`ecs:UpdateService` nos serviços `api-prod-sp` e `api-release-sp`. Não é o
+papel da tarefa do painel, que segue só leitura.
+
+**Pendente.** Papel IAM e agendamento (uma execução por dia) em Terraform; o
+quadro de renovações na tela Credencial ainda lê só o workflow.
+
 ## 2026-11-10: a regra 4 passa a ser "nunca identificar a conversa"
 
 **Decisão (Nicole).** Para entender os bugs, a tela Atendimento mostra uma linha

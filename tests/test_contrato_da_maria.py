@@ -39,8 +39,15 @@ def _eventos_dos_logs() -> dict[str, set[str]]:
 LOGS = _eventos_dos_logs()
 
 
+# Eventos que a Maria já registra em develop e que chegam em main no release seguinte.
+# Em main, o contrato não os cobra; tire daqui quando o release sair.
+AINDA_SO_NO_DEVELOP = {"desambiguacao_tom"}
+
+
 @pytest.mark.parametrize("evento", sorted(contrato.EVENTOS))
 def test_o_codigo_da_maria_registra_o_evento_e_os_campos_que_o_painel_le(evento: str) -> None:
+    if evento in AINDA_SO_NO_DEVELOP and RETRATO["origem"].get("branch") != "develop":
+        pytest.skip(f"{evento} ainda só está no develop da Maria; chega em main no release seguinte")
     registrados = RETRATO["eventos"]
     origem = f"maria-langgraph-pp @ {RETRATO['origem']['commit'][:7]}"
     assert evento in registrados, f"{origem} não registra mais o evento {evento!r}: o painel lê esse nome"
