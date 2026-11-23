@@ -1,9 +1,9 @@
 output "papel_da_renovacao" {
-  description = "Papel da tarefa: o que a policy permite está em main.tf."
+  description = "ARN do papel: vai na variável AWS_ROLE_ARN_RENOVADOR do repositório (Settings > Variables)."
   value       = aws_iam_role.renovador.arn
 }
 
-output "agendamento" {
-  description = "Estado do agendamento (DISABLED até alguém ligar)."
-  value       = aws_scheduler_schedule.renovador.state
+output "grupo_de_logs" {
+  description = "Grupo que a tela Credencial lê."
+  value       = aws_cloudwatch_log_group.renovador.name
 }

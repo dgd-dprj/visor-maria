@@ -118,17 +118,21 @@ tempo invalidariam o token uma da outra: o agendamento do Visor deve ficar
 desligado enquanto o workflow não for desativado, ou ligado só como rede de
 segurança, nunca rodando junto na mesma hora.
 
-**Permissão mínima do papel que roda o comando** (`sa-east-1`):
+**Permissão mínima do papel que roda o comando** (`sa-east-1`), no papel `visor-maria-renovador`:
 `secretsmanager:GetSecretValue` e `PutSecretValue` em
 `maria-langgraph-pp-{prod,release}/app`; `secretsmanager:CreateSecret`,
 `DescribeSecret` e `DeleteSecret` em `visor-maria/trava-renovacao-*`;
 `ecs:UpdateService` nos serviços `api-prod-sp` e `api-release-sp`. Não é o
 papel da tarefa do painel, que segue só leitura.
 
-**Terraform.** `infra/renovador`: papel com essa permissão e agendamento diário
-(EventBridge Scheduler + tarefa Fargate), **desligado por padrão** e sem repetição
-automática. Falta aplicar (Ícaro) e depende do cluster, da imagem e das subredes da
-etapa 1.
+**Onde roda.** Num workflow agendado do próprio visor-maria
+(`.github/workflows/renovar-token-verde.yml`), com um papel OIDC só dele, em vez de
+uma tarefa Fargate: assim não depende do cluster, da imagem e das subredes da etapa 1
+(Ícaro, 23/11). `infra/renovador` (Terraform, estado próprio) cria o papel, que só a
+`main` deste repositório assume, com a permissão acima mais escrever no grupo de
+logs `/ecs/visor-maria/renovador`. O agendamento fica **desligado** até a variável
+do repositório `RENOVADOR_LIGADO` valer `true`; o disparo manual começa em
+simulação. Sem repetição automática: o refresh invalida o token antigo.
 
 **Na tela Credencial.** O comando grava uma linha JSON por ambiente e por dia em
 `/ecs/visor-maria/renovador` (evento `renovacao_verde`: ambiente, resultado,
@@ -139,8 +143,10 @@ ao Verde na abertura da página, para o token não entrar no servidor web (Ícar
 23/11). Se o grupo não existe ou o papel do painel não o lê, a tela segue só com
 o workflow. A validade atualiza uma vez por dia, não ao vivo.
 
-**Pendente.** Dar ao papel da tarefa do painel a leitura do grupo
-`/ecs/visor-maria/renovador` (README, "Permissões", item 6).
+**Pendente.** Aplicar o Terraform e guardar o papel em `AWS_ROLE_ARN_RENOVADOR`;
+dar ao papel da tarefa do painel a leitura do grupo `/ecs/visor-maria/renovador`
+(README, "Permissões", item 6); decidir o que fazer com o workflow da Maria antes
+de ligar `RENOVADOR_LIGADO`.
 
 ## 2026-11-10: a regra 4 passa a ser "nunca identificar a conversa"
 
