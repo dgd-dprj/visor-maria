@@ -125,8 +125,18 @@ segurança, nunca rodando junto na mesma hora.
 `ecs:UpdateService` nos serviços `api-prod-sp` e `api-release-sp`. Não é o
 papel da tarefa do painel, que segue só leitura.
 
-**Pendente.** Papel IAM e agendamento (uma execução por dia) em Terraform; o
-quadro de renovações na tela Credencial ainda lê só o workflow.
+**Na tela Credencial.** O comando grava uma linha JSON por ambiente e por dia em
+`/ecs/visor-maria/renovador` (evento `renovacao_verde`: ambiente, resultado,
+`validaAte`; nunca o token), mesmo quando não renova. A tela lê esse grupo pelo
+Logs Insights e usa a validade mais recente entre ele e o log do workflow; as
+renovações do Visor entram na linha do tempo. Escolhido no lugar de uma chamada
+ao Verde na abertura da página, para o token não entrar no servidor web (Ícaro,
+23/11). Se o grupo não existe ou o papel do painel não o lê, a tela segue só com
+o workflow. A validade atualiza uma vez por dia, não ao vivo.
+
+**Pendente.** Papel IAM e agendamento em Terraform (PR #17); dar ao papel da
+tarefa do painel a leitura do grupo `/ecs/visor-maria/renovador` (README,
+"Permissões", item 6).
 
 ## 2026-11-10: a regra 4 passa a ser "nunca identificar a conversa"
 
