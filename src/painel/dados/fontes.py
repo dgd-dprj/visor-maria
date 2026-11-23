@@ -1,0 +1,726 @@
+"""O que cada tela pergunta à camada de dados, e de onde cada resposta vem.
+
+`FonteDeDados` é o contrato. O simulado e a fonte real (CloudWatch e GitHub,
+ainda por fazer) implementam o mesmo contrato e devolvem as mesmas `Fonte`s,
+para a tela não saber qual dos dois está ligado.
+
+Os nomes técnicos seguem o levantamento de 23/10: produção e release se separam
+pelo grupo de logs, pelo serviço do ECS e pelo target group. Nada aqui lê o
+banco: a #309 bloqueia o banco como fonte. Nada lê o segredo da credencial.
+"""
+
+from __future__ import annotations
+
+from datetime import date, datetime, timedelta
+from typing import Protocol
+
+from painel.dados.modelo import (
+    AMBIENTE_DA_ORIGEM,
+    QA,
+    Alarme,
+    AlertaDeCodigo,
+    Ambiente,
+    ContagemPorDia,
+    ContagemPorHora,
+    ConversasDoFluxo,
+    CpuELatencia,
+    Credencial,
+    Desfecho,
+    DesfechoDoFluxo,
+    DiaDoModelo,
+    DiaDoVerde,
+    DuracaoDasConversas,
+    DuracaoDoVerde,
+    EncaminhamentoNoDia,
+    EnvioDoWhatsapp,
+    ErroDaIA,
+    FluxoNoDia,
+    Fonte,
+    GastoDeIA,
+    GastoDoAssunto,
+    HoraDaInfra,
+    HorarioDaConferencia,
+    IncidenteDeCredencial,
+    Leitura,
+    MudancaNaIA,
+    OcorrenciasDoPeriodo,
+    Origem,
+    OrigemNaoAtendida,
+    ProblemaNoDia,
+    RecursosDoServico,
+    Renovacao,
+    RequisicoesPorHora,
+    RespostasComErro,
+    ResultadoDoVerde,
+    ResumoDoDia,
+    ResumoDoOrquestrador,
+    ResumoDoPeriodo,
+    RodadaDaTriagem,
+    Rotina,
+    SaudeServico,
+    SistemaNoDia,
+    TempoDeResposta,
+    TokensDoDia,
+    TokensRegistrados,
+    TomDaIA,
+    TomNaProducao,
+    TrechoDeNaoEncontrado,
+    UsoDaIA,
+)
+
+# Produção segue na Virgínia. O release passou para São Paulo em 16/11, com os
+# nomes terminados em -sp, e o da Virgínia foi desligado (maria-langgraph-pp,
+# docs/infra-sa-east-1.md, #463 e #500).
+REGIAO = {Ambiente.PRODUCAO: "us-east-1", Ambiente.RELEASE: "sa-east-1"}
+# O CloudFront e a Lambda do e-mail mandam as métricas só para a Virgínia, nos dois ambientes.
+REGIAO_GLOBAL = "us-east-1"
+GRUPO_DE_LOGS = {
+    Ambiente.PRODUCAO: "/ecs/maria-langgraph-pp/api",
+    Ambiente.RELEASE: "/ecs/maria-langgraph-pp-release-sp/api",
+}
+CLUSTER = {Ambiente.PRODUCAO: "maria-langgraph-pp", Ambiente.RELEASE: "maria-langgraph-pp-sp"}
+SERVICO_ECS = {Ambiente.PRODUCAO: "api", Ambiente.RELEASE: "api-release-sp"}
+TARGET_GROUP = {
+    Ambiente.PRODUCAO: "maria-langgraph-pp-api",
+    Ambiente.RELEASE: "maria-langgraph-pp-release-sp",
+}
+LOGS_DO = {Ambiente.PRODUCAO: "logs de produção", Ambiente.RELEASE: "logs do release"}
+# Na tela financeira, para quem lê de finanças: o mesmo grupo de logs, sem a palavra técnica.
+REGISTRO_DO = {Ambiente.PRODUCAO: "registro da aplicação em produção", Ambiente.RELEASE: "registro da aplicação no release"}
+# A infraestrutura de cada ambiente (levantamento de 10/11, pelas métricas): a
+# distribuição do CloudFront de produção teve 4.107 pedidos em 7 dias, e a do release, 286.
+# A do release em São Paulo é a de cloudfront.tf (api_https_url_release_sp), em uso desde 16/11.
+DISTRIBUICAO = {Ambiente.PRODUCAO: "E3AYMLBF0ZRZL3", Ambiente.RELEASE: "E1ZY4LVRDV8EK3"}
+BANCO = {Ambiente.PRODUCAO: "maria-chat-prod-pg", Ambiente.RELEASE: "maria-chat-sp-pg"}
+PROXY_DO_BANCO = {Ambiente.PRODUCAO: "maria-chat-prod-proxy", Ambiente.RELEASE: "maria-chat-sp-proxy"}
+SAIDA_NAT = {Ambiente.PRODUCAO: "nat-0dc2b3f3dc8a5d353", Ambiente.RELEASE: "nat-02426cb2130abd20b"}
+# Uma função só, na Virgínia, para os dois ambientes.
+FUNCAO_DO_EMAIL = "maria-email-nudecon"
+# O modelo da produção, que a tela financeira cobra.
+MODELO_DE_CHAT = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+# Em São Paulo, o release usa o Qwen, para a inferência ficar no Brasil (terraform-sp, bedrock_model_id).
+MODELO_DO = {Ambiente.PRODUCAO: MODELO_DE_CHAT, Ambiente.RELEASE: "qwen.qwen3-vl-235b-a22b"}
+MODELO_DE_EMBEDDING = "amazon.titan-embed-text-v2:0"
+
+# O Logs Insights cobra pelo que varre, e as telas ficam abertas o dia todo:
+# as janelas são as menores que respondem à pergunta (levantamento, seção 5).
+DIAS_DO_GRAFICO_DO_VERDE = 8
+DIAS_DO_CUSTO = 30
+# Os logs da aplicação guardam 30 dias (retention_in_days nos .tf de produção e do
+# release, develop em 26/10): antes disso, só as métricas.
+DIAS_DO_REGISTRO = 30
+
+
+def primeiro_dia_nos_logs(agora: datetime) -> date:
+    """O dia mais antigo que os logs ainda guardam inteiro: a retenção é de 30 dias."""
+    return (agora - timedelta(days=DIAS_DO_REGISTRO)).date() + timedelta(days=1)
+
+
+def ultimo_dia_do_mes(mes: date) -> date:
+    return (mes.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
+
+
+def _quando(padrao: str, dia: date | None) -> str:
+    """A janela no nome da fonte: a padrão ("nas últimas 24 horas"), o dia escolhido
+    na tela, ou a hora escolhida (o `dia` é então o começo dela, um `datetime`)."""
+    if dia is None:
+        return padrao
+    if isinstance(dia, datetime):
+        return f"em {dia:%d/%m/%Y}, das {dia.hour}h às {dia.hour + 1}h"
+    return f"em {dia:%d/%m/%Y}"
+
+
+def _logs(ambiente: Ambiente, nome: str, eventos: str) -> Fonte:
+    return Fonte(curto=LOGS_DO[ambiente], nome=f"Logs da aplicação, {nome}", identificador=f"{GRUPO_DE_LOGS[ambiente]}, {eventos}", atraso="segundos")
+
+
+def fonte_saude_servico(ambiente: Ambiente) -> Fonte:
+    return Fonte(
+        curto="balanceador",
+        nome="Métrica do balanceador, containers saudáveis",
+        identificador=f"AWS/ApplicationELB HealthyHostCount, {TARGET_GROUP[ambiente]}",
+        atraso="cerca de 1 minuto",
+    )
+
+
+def fonte_implantacoes(ambiente: Ambiente) -> Fonte:
+    return Fonte(
+        curto="ECS",
+        nome="Métrica do ECS, implantações em curso",
+        identificador=f"ECS/ContainerInsights DeploymentCount, serviço {SERVICO_ECS[ambiente]}",
+        atraso="cerca de 1 minuto",
+    )
+
+
+def fonte_ultimo_reinicio(ambiente: Ambiente) -> Fonte:
+    return _logs(ambiente, "última subida do container", 'linha "Application startup complete."')
+
+
+def fonte_resumo_do_dia(ambiente: Ambiente, dia: date | None = None) -> Fonte:
+    return _logs(
+        ambiente,
+        _quando("desde 0h", dia),
+        "eventos atendimento_criado, atendimento_finalizado, pergunta_enviada, verde_chamada e atendimento_sem_checkpoint",
+    )
+
+
+# O comando de renovação (painel/renovador.py, issue #14) grava uma linha JSON por ambiente e por dia, sem token.
+GRUPO_DO_RENOVADOR = "/ecs/visor-maria/renovador"
+REGIAO_DO_RENOVADOR = "sa-east-1"
+AMBIENTE_NO_RENOVADOR = {Ambiente.PRODUCAO: "prod", Ambiente.RELEASE: "release"}
+
+
+def fonte_credencial(ambiente: Ambiente) -> Fonte:
+    # A validade vem do log da conferência diária ("status atual ... expiraEm"),
+    # e não do segredo: o painel nunca lê a credencial.
+    return Fonte(
+        curto=f"GitHub e {LOGS_DO[ambiente]}",
+        nome="Validade pelo log da conferência diária da credencial e pelo log da renovação do Visor; última consulta aceita pelos logs",
+        identificador=(
+            f'verificar-token-verde.yml, linha "status atual"; {GRUPO_DO_RENOVADOR}, evento renovacao_verde; {GRUPO_DE_LOGS[ambiente]}, evento verde_chamada'
+        ),
+        atraso="até 1 dia na validade, segundos na última consulta",
+    )
+
+
+def fonte_rotinas() -> Fonte:
+    return Fonte(
+        curto="GitHub",
+        nome="Execuções das rotinas automáticas desde 19/09",
+        identificador="GitHub Actions, dgd-dprj/maria-langgraph-pp",
+        atraso="minutos",
+    )
+
+
+def fonte_renovacoes() -> Fonte:
+    return Fonte(
+        curto="GitHub",
+        nome="Renovações feitas pela conferência diária da credencial e pelo comando do Visor",
+        identificador=f'verificar-token-verde.yml, linhas "token renovado" e "container novo no ar"; {GRUPO_DO_RENOVADOR}, evento renovacao_verde',
+        atraso="minutos",
+    )
+
+
+def fonte_verde_por_dia(ambiente: Ambiente) -> Fonte:
+    return _logs(
+        ambiente,
+        f"consultas ao Verde por dia, últimos {DIAS_DO_GRAFICO_DO_VERDE} dias",
+        "evento verde_chamada, campos resultado e status",
+    )
+
+
+def fonte_incidentes() -> Fonte:
+    return Fonte(
+        curto="logs de produção e logs do release",
+        nome="Blocos de recusa da credencial (status 401 ou 403) nos 30 dias de logs, com as conversas que bateram na recusa",
+        identificador=f"{GRUPO_DE_LOGS[Ambiente.PRODUCAO]} e {GRUPO_DE_LOGS[Ambiente.RELEASE]}, evento verde_chamada",
+        atraso="segundos",
+    )
+
+
+def fonte_tempo_de_resposta(ambiente: Ambiente, dia: date | None = None) -> Fonte:
+    return _logs(
+        ambiente,
+        f"tempo de resposta das rotas de atendimento {_quando('nas últimas 24 horas', dia)}",
+        'linhas "incoming request" (req.url) e "request completed" (responseTime), ligadas pelo reqId',
+    )
+
+
+def fonte_duracao_do_verde(ambiente: Ambiente, dia: date | None = None) -> Fonte:
+    return _logs(ambiente, f"duração das consultas ao Verde {_quando('nos últimos 7 dias', dia)}", "evento verde_chamada, campos chamada e duracaoMs")
+
+
+def fonte_resultado_do_verde(ambiente: Ambiente, dia: date | None = None) -> Fonte:
+    return _logs(
+        ambiente, f"resultado das consultas ao Verde {_quando('nos últimos 7 dias', dia)}", "evento verde_chamada, campos resultado, status e tipoErro"
+    )
+
+
+def fonte_respostas_com_erro(ambiente: Ambiente, dia: date | None = None) -> Fonte:
+    return _logs(
+        ambiente,
+        f"respostas 4xx e 5xx {_quando('nas últimas 24 horas', dia)}",
+        'linhas "incoming request" (req.url) e "request completed" (res.statusCode), ligadas pelo reqId',
+    )
+
+
+def fonte_tokens_por_dia() -> Fonte:
+    return Fonte(
+        curto="Bedrock da conta inteira",
+        nome="Tokens contados pelo Bedrock, por dia, para a conta AWS inteira (não separa ambiente nem projeto)",
+        identificador=f"AWS/Bedrock InputTokenCount e OutputTokenCount, ModelId {MODELO_DE_CHAT}",
+        atraso="cerca de 1 minuto",
+    )
+
+
+def fonte_gasto_de_ia() -> Fonte:
+    return Fonte(
+        curto="medição da AWS para a conta inteira",
+        nome=(
+            "Texto lido e escrito pela inteligência artificial e busca por semelhança, contados pela AWS dia a dia para a conta "
+            "inteira (não separa ambiente nem projeto), vezes o preço de tabela"
+        ),
+        identificador=f"AWS/Bedrock InputTokenCount e OutputTokenCount, ModelId {MODELO_DE_CHAT} e {MODELO_DE_EMBEDDING}, períodos de 1 dia em Brasília",
+        atraso="cerca de 1 minuto",
+    )
+
+
+def fonte_gasto_por_assunto(ambiente: Ambiente) -> Fonte:
+    return Fonte(
+        curto=REGISTRO_DO[ambiente],
+        nome=f"Atendimentos que terminaram e triagens, por assunto, com os tokens que a aplicação registrou ({REGISTRO_DO[ambiente]})",
+        identificador=f"{GRUPO_DE_LOGS[ambiente]}, eventos atendimento_finalizado (fluxoId, tokensGastos) e orquestrador_* (tokensGastosTotal)",
+        atraso="segundos",
+    )
+
+
+def fonte_resumo_do_periodo(origem: Origem, dia: date | None = None) -> Fonte:
+    return _logs(
+        AMBIENTE_DA_ORIGEM[origem],
+        f"atendimentos {_quando('no período', dia)}",
+        "eventos atendimento_criado, atendimento_finalizado, pergunta_enviada e ttl_confirmacao_solicitada",
+    )
+
+
+def fonte_nao_encontrado(origem: Origem) -> Fonte:
+    return _logs(
+        AMBIENTE_DA_ORIGEM[origem],
+        'encerramentos por "RG não encontrado" e a credencial no mesmo período',
+        "eventos atendimento_finalizado (motivoHandoff) e verde_chamada",
+    )
+
+
+def fonte_orquestrador() -> Fonte:
+    return _logs(
+        Ambiente.RELEASE,
+        "conversas por escrita livre",
+        "eventos orquestrador_fluxo_identificado, orquestrador_redirecionado, orquestrador_finalizado_sem_fluxo e orquestrador_pergunta_enviada",
+    )
+
+
+def fonte_sistema_no_dia(ambiente: Ambiente, dia: date | None = None) -> Fonte:
+    return Fonte(
+        curto=f"balanceador, {LOGS_DO[ambiente]} e GitHub",
+        nome=f"O sistema {_quando('desde 0h', dia)}: tempo fora do ar, reinícios, erros de servidor, subidas e testes",
+        identificador=(
+            f"AWS/ApplicationELB HealthyHostCount e HTTPCode_Target_5XX_Count, {TARGET_GROUP[ambiente]}; "
+            f'{GRUPO_DE_LOGS[ambiente]}, linha "Application startup complete."; GitHub Actions'
+        ),
+        atraso="cerca de 1 minuto",
+    )
+
+
+def fonte_atendimentos_por_hora(ambiente: Ambiente) -> Fonte:
+    return _logs(ambiente, "atendimentos por hora num dia", "eventos atendimento_criado e atendimento_finalizado")
+
+
+def fonte_atendimentos_por_dia(ambiente: Ambiente) -> Fonte:
+    return _logs(ambiente, f"atendimentos por dia, últimos {DIAS_DO_REGISTRO} dias", "eventos atendimento_criado e atendimento_finalizado")
+
+
+def fonte_desfechos(ambiente: Ambiente) -> Fonte:
+    return _logs(ambiente, "como os atendimentos terminaram", "evento atendimento_finalizado, campo motivoHandoff")
+
+
+def fonte_origem_nao_atendida(ambiente: Ambiente) -> Fonte:
+    return _logs(
+        ambiente,
+        '"origem do processo não atendida", aberta pela consulta ao processo na mesma conversa',
+        'eventos atendimento_finalizado (motivoHandoff) e verde_chamada (chamada "processo", resultado, tipoErro), contados por conversa',
+    )
+
+
+def fonte_requisicoes_por_hora(ambiente: Ambiente, dia: date | None = None) -> Fonte:
+    return Fonte(
+        curto="balanceador",
+        nome=f"Requisições e erros de servidor por hora, {_quando('nas últimas 24 horas', dia)} (inclui a varredura de robôs)",
+        identificador=f"AWS/ApplicationELB RequestCount e HTTPCode_Target_5XX_Count, {TARGET_GROUP[ambiente]}",
+        atraso="cerca de 1 minuto",
+    )
+
+
+def fonte_recursos_do_servico(ambiente: Ambiente) -> Fonte:
+    return Fonte(
+        curto="ECS",
+        nome="CPU e memória usadas pelo serviço, como parte do que a tarefa reserva",
+        identificador=f"ECS/ContainerInsights CpuUtilized, CpuReserved, MemoryUtilized e MemoryReserved, serviço {SERVICO_ECS[ambiente]}",
+        atraso="cerca de 1 minuto",
+    )
+
+
+def fonte_alarmes() -> Fonte:
+    return Fonte(
+        curto="alarmes",
+        nome="Os alarmes que avisam a equipe (infra/alertas): o estado de agora e os disparos dos últimos 7 dias",
+        identificador="CloudWatch Alarms com o prefixo visor-maria-, DescribeAlarms e DescribeAlarmHistory",
+        atraso="cerca de 1 minuto",
+    )
+
+
+def fonte_cpu_e_latencia(dia: date | None = None) -> Fonte:
+    return Fonte(
+        curto="ECS e balanceador",
+        nome=f"CPU do serviço e latência p99 do balanceador por hora, {_quando('nas últimas 24 horas', dia)}, produção e release",
+        identificador=(
+            f"AWS/ECS CPUUtilization (média), serviços {SERVICO_ECS[Ambiente.PRODUCAO]} e {SERVICO_ECS[Ambiente.RELEASE]}; "
+            f"AWS/ApplicationELB TargetResponseTime (p99), {TARGET_GROUP[Ambiente.PRODUCAO]} e {TARGET_GROUP[Ambiente.RELEASE]}"
+        ),
+        atraso="cerca de 1 minuto",
+    )
+
+
+def _no_mes(mes: date | None) -> str:
+    """ "nos últimos 30 dias", ou "em 10/2026", o mês escolhido no gráfico."""
+    return "nos últimos 30 dias" if mes is None else f"em {mes:%m/%Y}"
+
+
+def fonte_horarios_da_conferencia(mes: date | None = None) -> Fonte:
+    return Fonte(
+        curto="GitHub",
+        nome=f"Hora em que cada conferência diária começou, {_no_mes(mes)}",
+        identificador="GitHub Actions, verificar-token-verde.yml (agendada para 0 12 * * *, 9h em Brasília)",
+        atraso="minutos",
+    )
+
+
+def fonte_verde_do_mes(ambiente: Ambiente, mes: date | None = None) -> Fonte:
+    return _logs(ambiente, f"consultas ao Verde por dia, {_no_mes(mes)}", "evento verde_chamada, campos resultado e status")
+
+
+def fonte_erros_da_ia(ambiente: Ambiente, dia: date | None = None) -> Fonte:
+    return _logs(
+        ambiente,
+        f"falhas das funções de inteligência artificial {_quando('nos últimos 30 dias', dia)}",
+        'linhas de erro "[classificar] falha", "[desambiguar] falha", "[extrair] falha", "[reescrever] falha" e "[sumarizar] falha"',
+    )
+
+
+def fonte_uso_da_ia(ambiente: Ambiente, dia: date | None = None) -> Fonte:
+    return _logs(ambiente, f"perguntas escritas pela inteligência artificial {_quando('nos últimos 7 dias', dia)}", "evento pergunta_enviada, campo viaIA")
+
+
+def fonte_saude_do_modelo() -> Fonte:
+    return Fonte(
+        curto="medição da AWS para a conta inteira",
+        nome="Chamadas, erros, limitação e demora do modelo de conversa, por dia, nos últimos 14 dias (conta inteira)",
+        identificador=(
+            "AWS/Bedrock Invocations, InvocationClientErrors, InvocationServerErrors, InvocationThrottles, InvocationLatency e "
+            f"OutputTokenCount, ModelId {MODELO_DE_CHAT}"
+        ),
+        atraso="cerca de 1 minuto",
+    )
+
+
+def fonte_mudancas_na_ia() -> Fonte:
+    return Fonte(
+        curto="GitHub",
+        nome="Mudanças no módulo de inteligência artificial da Maria, na branch develop",
+        identificador="GitHub, dgd-dprj/maria-langgraph-pp, commits em src/maria/ia",
+        atraso="minutos",
+    )
+
+
+def fonte_tokens_registrados(ambiente: Ambiente) -> Fonte:
+    return Fonte(
+        curto=REGISTRO_DO[ambiente],
+        nome=f"Tokens que as conversas da Maria registraram, por dia, nos últimos {DIAS_DO_REGISTRO} dias ({REGISTRO_DO[ambiente]})",
+        identificador=(
+            f"{GRUPO_DE_LOGS[ambiente]}, evento atendimento_finalizado (tokensGastos) e eventos orquestrador_fluxo_identificado, "
+            "orquestrador_redirecionado, orquestrador_finalizado_sem_fluxo e orquestrador_pergunta_enviada (tokensGastosTotal)"
+        ),
+        atraso="segundos",
+    )
+
+
+# ── Fluxos ────────────────────────────────────────────────────────────────
+# As janelas da tela Fluxos: os detalhes em 7 dias (ou no dia escolhido), o
+# histórico e os problemas em 30, dia a dia.
+DIAS_DOS_FLUXOS = 7
+
+
+def fonte_conversas_por_fluxo(ambiente: Ambiente, dia: date | None = None) -> Fonte:
+    return _logs(
+        ambiente,
+        f"conversas por fluxo, por respostas e por como terminaram, {_quando(f'nos últimos {DIAS_DOS_FLUXOS} dias', dia)}",
+        "eventos atendimento_criado, atendimento_finalizado (destino), atendimento_expirado e resposta_recebida, juntados por conversa (chatId) e só contados",
+    )
+
+
+def fonte_desfechos_por_fluxo(ambiente: Ambiente, dia: date | None = None) -> Fonte:
+    return _logs(
+        ambiente,
+        f"como cada fluxo terminou {_quando(f'nos últimos {DIAS_DOS_FLUXOS} dias', dia)}",
+        "evento atendimento_finalizado, campos fluxoId, motivoHandoff e destino",
+    )
+
+
+def fonte_triagem(ambiente: Ambiente, dia: date | None = None) -> Fonte:
+    return _logs(
+        ambiente,
+        f"como a triagem por escrita livre direcionou {_quando(f'nos últimos {DIAS_DOS_FLUXOS} dias', dia)}",
+        "eventos orquestrador_fluxo_identificado (flowId), orquestrador_redirecionado e orquestrador_finalizado_sem_fluxo (tipoCaso, destino), "
+        "orquestrador_pergunta_enviada e orquestrador_inconsistencia",
+    )
+
+
+def fonte_fluxos_por_dia(ambiente: Ambiente) -> Fonte:
+    return _logs(
+        ambiente,
+        f"conversas por fluxo e por dia, últimos {DIAS_DO_REGISTRO} dias",
+        "eventos atendimento_criado e atendimento_finalizado (destino), campo fluxoId",
+    )
+
+
+def fonte_problemas_por_dia(ambiente: Ambiente) -> Fonte:
+    return _logs(
+        ambiente,
+        f"problemas no caminho das conversas, por dia, últimos {DIAS_DO_REGISTRO} dias",
+        "evento atendimento_finalizado com motivoHandoff falha_infra_verde; eventos atendimento_expirado, atendimento_sem_checkpoint, "
+        "orquestrador_inconsistencia, whatsapp_envio_falhou, whatsapp_envio_erro, whatsapp_bridge_erro e whatsapp_status_entrega com status failed",
+    )
+
+
+def fonte_encaminhamentos(ambiente: Ambiente) -> Fonte:
+    return _logs(
+        ambiente,
+        f"atendimentos que terminaram, por dia, destino e motivo, últimos {DIAS_DO_REGISTRO} dias",
+        "evento atendimento_finalizado (fluxoId, destino, motivoHandoff); eventos orquestrador_finalizado_sem_fluxo e "
+        "orquestrador_inconsistencia, só os que mandam para pessoa (campo destino)",
+    )
+
+
+def fonte_duracao_das_conversas(ambiente: Ambiente, dia: date | None = None) -> Fonte:
+    return _logs(
+        ambiente,
+        f"quanto as conversas que terminaram levaram, do começo ao fim, {_quando(f'nos últimos {DIAS_DOS_FLUXOS} dias', dia)}",
+        "eventos atendimento_criado e atendimento_finalizado, juntados por conversa (chatId) e só contados",
+    )
+
+
+def fonte_envios_do_whatsapp(ambiente: Ambiente, dia: date | None = None) -> Fonte:
+    return _logs(
+        ambiente,
+        f"envios ao WhatsApp e avisos de entrega {_quando(f'nos últimos {DIAS_DOS_FLUXOS} dias', dia)}",
+        "eventos whatsapp_envio_ok, whatsapp_envio_falhou (status), whatsapp_envio_erro, whatsapp_bridge_erro e whatsapp_status_entrega (status, erroCodigo)",
+    )
+
+
+def fonte_ocorrencias(origem: Origem, dia: date | None = None) -> Fonte:
+    return _logs(
+        AMBIENTE_DA_ORIGEM[origem],
+        f"cada problema, com a hora, a etapa e o código, {_quando('no trecho da origem', dia)}",
+        'linhas "incoming request", "request completed" e de erro (err.type), ligadas pelo reqId; eventos verde_chamada (sem sucesso), '
+        "email_nudecon_falha, atendimento_sem_checkpoint, orquestrador_inconsistencia e whatsapp_*; linhas de erro das funções de IA; "
+        "e, para o que aconteceu depois, atendimento_finalizado, atendimento_expirado e resposta_recebida da mesma conversa (chatId, que não sai da fonte)",
+    )
+
+
+DIAS_DA_INFRA = 14
+
+
+def _fonte_infra(ambiente: Ambiente, quando: str) -> Fonte:
+    return Fonte(
+        curto=f"CloudFront, balanceador, ECS, RDS, NAT, Bedrock, Lambda e {LOGS_DO[ambiente]}",
+        nome=f"A infraestrutura hora a hora, {quando}",
+        identificador=(
+            f"AWS/CloudFront Requests, 5xxErrorRate e 4xxErrorRate, {DISTRIBUICAO[ambiente]}; "
+            f"AWS/ApplicationELB TargetResponseTime (p99) e HealthyHostCount, {TARGET_GROUP[ambiente]}; "
+            f"AWS/ECS CPUUtilization e MemoryUtilization e ECS/ContainerInsights DesiredTaskCount, serviço {SERVICO_ECS[ambiente]}; "
+            f"AWS/RDS CPUUtilization, DatabaseConnections e FreeableMemory, {BANCO[ambiente]}; "
+            f"AWS/NATGateway ErrorPortAllocation e PacketsDropCount, {SAIDA_NAT[ambiente]}; "
+            f"AWS/Bedrock InvocationClientErrors, InvocationServerErrors e InvocationThrottles, {MODELO_DO[ambiente]}; "
+            f"AWS/Lambda Errors e Throttles, {FUNCAO_DO_EMAIL}; região {REGIAO[ambiente]}; "
+            f'{GRUPO_DE_LOGS[ambiente]}, evento verde_chamada (sem sucesso), linhas "request completed" acima de 30 s e "Application startup complete."'
+        ),
+        atraso="cerca de 1 minuto",
+    )
+
+
+def fonte_infra_por_hora(ambiente: Ambiente, dia: date | None = None) -> Fonte:
+    return _fonte_infra(ambiente, _quando("nas últimas 24 horas", dia))
+
+
+def fonte_infra_por_dia(ambiente: Ambiente) -> Fonte:
+    return _fonte_infra(ambiente, f"juntada por dia, nos últimos {DIAS_DA_INFRA} dias")
+
+
+# O QA começou em 13/11 (o roteiro da staging); o ponta a ponta do CI, em 16/11 (#502).
+INICIO_DO_QA = date(2026, 11, 13)
+
+
+def fonte_qa() -> Fonte:
+    return Fonte(
+        curto="GitHub",
+        nome="Rodadas de QA desde 13/11: o ponta a ponta do CI e o resumo do QA da staging nos PRs para a staging",
+        identificador=(
+            'dgd-dprj/maria-langgraph-pp: ci.yml, job ponta_a_ponta (linhas "cenários OK" e "FALHOU" do log); '
+            'comentários "QA da staging" nos PRs com base staging (linhas "de N OK", "Custo de IA" e "❌")'
+        ),
+        atraso="minutos",
+    )
+
+
+def fonte_alertas_de_codigo() -> Fonte:
+    return Fonte(
+        curto="GitHub",
+        nome="Alertas abertos do CodeQL",
+        identificador="dgd-dprj/maria-langgraph-pp: code scanning, state=open (codeql.yml, #502)",
+        atraso="minutos",
+    )
+
+
+# O resultado da comparação de tom é publicado como comentário na #508, com o bloco de dados marcado.
+ISSUE_DO_TOM = 508
+MARCA_DO_TOM = "<!-- visor:tom-da-ia -->"
+
+
+def fonte_tom_da_ia() -> Fonte:
+    return Fonte(
+        curto="GitHub",
+        nome="Comparação do tom da pergunta de desambiguação (Haiku e Qwen) e as notas da equipe",
+        identificador=(
+            f'dgd-dprj/maria-langgraph-pp: comentário mais novo da #{ISSUE_DO_TOM} com "{MARCA_DO_TOM}" '
+            '(scripts/avaliacao/tom_desambiguacao.py); issues com título "[nota de tom]"'
+        ),
+        atraso="minutos",
+    )
+
+
+# O tom de verdade (17/11): onde a Maria registra o evento desambiguacao_tom. A produção nova, em São Paulo
+# (#509), ainda não está nos ambientes do Visor: entra aqui pelo grupo dela, até o corte.
+GRUPO_PRODUCAO_SP = "/ecs/maria-langgraph-pp-prod-sp/api"
+ONDE_O_TOM_E_LIDO: tuple[tuple[str, str, str], ...] = (
+    ("Produção", REGIAO[Ambiente.PRODUCAO], GRUPO_DE_LOGS[Ambiente.PRODUCAO]),
+    ("Produção em São Paulo", "sa-east-1", GRUPO_PRODUCAO_SP),
+    ("Release", REGIAO[Ambiente.RELEASE], GRUPO_DE_LOGS[Ambiente.RELEASE]),
+)
+
+
+def fonte_tom_na_producao() -> Fonte:
+    return Fonte(
+        curto="logs de produção e do release",
+        nome="Tom das perguntas de desambiguação de verdade, nos últimos 30 dias (só números, sem texto)",
+        identificador=", ".join(grupo for _, _, grupo in ONDE_O_TOM_E_LIDO) + ", evento desambiguacao_tom",
+        atraso="segundos",
+    )
+
+
+class FonteDeDados(Protocol):
+    """As consultas com `dia` leem, com ele, aquele dia de Brasília, de 0h a 24h
+    (ou até agora, se for hoje), em vez da janela padrão. É o filtro de dia das
+    telas: o clique num dia de um gráfico refaz a tela inteira naquele dia."""
+
+    # Entra na chave do cache: duas fontes nunca dividem leitura guardada.
+    @property
+    def nome(self) -> str: ...
+
+    def saude_servico(self, ambiente: Ambiente) -> Leitura[SaudeServico]: ...
+
+    def implantacoes_em_curso(self, ambiente: Ambiente) -> Leitura[int]: ...
+
+    def ultimo_reinicio(self, ambiente: Ambiente) -> Leitura[datetime]: ...
+
+    def resumo_do_dia(self, ambiente: Ambiente, dia: date | None = None) -> Leitura[ResumoDoDia]: ...
+
+    def credencial(self, ambiente: Ambiente) -> Leitura[Credencial]: ...
+
+    def rotinas(self) -> Leitura[list[Rotina]]: ...
+
+    def renovacoes(self) -> Leitura[list[Renovacao]]: ...
+
+    def verde_por_dia(self, ambiente: Ambiente) -> Leitura[list[DiaDoVerde]]: ...
+
+    def incidentes_de_credencial(self) -> Leitura[list[IncidenteDeCredencial]]: ...
+
+    def tempo_de_resposta(self, ambiente: Ambiente, dia: date | None = None) -> Leitura[TempoDeResposta]: ...
+
+    def duracao_do_verde(self, ambiente: Ambiente, dia: date | None = None) -> Leitura[list[DuracaoDoVerde]]: ...
+
+    def resultado_do_verde(self, ambiente: Ambiente, dia: date | None = None) -> Leitura[ResultadoDoVerde]: ...
+
+    def respostas_com_erro(self, ambiente: Ambiente, dia: date | None = None) -> Leitura[RespostasComErro]: ...
+
+    def tokens_por_dia(self) -> Leitura[list[TokensDoDia]]: ...
+
+    def gasto_do_dia(self, dia: date) -> Leitura[GastoDeIA]: ...
+
+    def gasto_do_mes(self, mes: date) -> Leitura[GastoDeIA]: ...
+
+    def gasto_por_assunto(self, ambiente: Ambiente, dia: date) -> Leitura[list[GastoDoAssunto]]: ...
+
+    def tokens_registrados(self, ambiente: Ambiente) -> Leitura[list[TokensRegistrados]]: ...
+
+    def atendimentos_por_hora(self, ambiente: Ambiente, dia: date) -> Leitura[list[ContagemPorHora]]: ...
+
+    def atendimentos_por_dia(self, ambiente: Ambiente) -> Leitura[list[ContagemPorDia]]: ...
+
+    def desfechos(self, origem: Origem, dia: date | None = None) -> Leitura[list[Desfecho]]: ...
+
+    def desfechos_do_dia(self, ambiente: Ambiente, dia: date) -> Leitura[list[Desfecho]]: ...
+
+    def origem_nao_atendida(self, origem: Origem, dia: date | None = None) -> Leitura[OrigemNaoAtendida]: ...
+
+    def requisicoes_por_hora(self, ambiente: Ambiente, dia: date | None = None) -> Leitura[list[RequisicoesPorHora]]: ...
+
+    def recursos_do_servico(self, ambiente: Ambiente) -> Leitura[RecursosDoServico]: ...
+
+    def alarmes(self) -> Leitura[list[Alarme]]: ...
+
+    def cpu_e_latencia(self, dia: date | None = None) -> Leitura[list[CpuELatencia]]: ...
+
+    def horarios_da_conferencia(self, mes: date | None = None) -> Leitura[list[HorarioDaConferencia]]: ...
+
+    def verde_do_mes(self, ambiente: Ambiente, mes: date | None = None) -> Leitura[list[DiaDoVerde]]: ...
+
+    def erros_da_ia(self, ambiente: Ambiente, dia: date | None = None) -> Leitura[list[ErroDaIA]]: ...
+
+    def uso_da_ia(self, ambiente: Ambiente, dia: date | None = None) -> Leitura[UsoDaIA]: ...
+
+    def saude_do_modelo(self) -> Leitura[list[DiaDoModelo]]: ...
+
+    def mudancas_na_ia(self) -> Leitura[list[MudancaNaIA]]: ...
+
+    def resumo_do_periodo(self, origem: Origem, dia: date | None = None) -> Leitura[ResumoDoPeriodo]: ...
+
+    def nao_encontrado(self, origem: Origem, dia: date | None = None) -> Leitura[list[TrechoDeNaoEncontrado]]: ...
+
+    def orquestrador(self, origem: Origem, dia: date | None = None) -> Leitura[ResumoDoOrquestrador]: ...
+
+    def sistema_no_dia(self, ambiente: Ambiente, dia: date | None = None) -> Leitura[SistemaNoDia]: ...
+
+    # Tela Fluxos
+    def conversas_por_fluxo(self, ambiente: Ambiente, dia: date | None = None) -> Leitura[list[ConversasDoFluxo]]: ...
+
+    def desfechos_por_fluxo(self, ambiente: Ambiente, dia: date | None = None) -> Leitura[list[DesfechoDoFluxo]]: ...
+
+    def triagem(self, ambiente: Ambiente, dia: date | None = None) -> Leitura[list[RodadaDaTriagem]]: ...
+
+    def fluxos_por_dia(self, ambiente: Ambiente) -> Leitura[list[FluxoNoDia]]: ...
+
+    def problemas_por_dia(self, ambiente: Ambiente) -> Leitura[list[ProblemaNoDia]]: ...
+
+    def duracao_das_conversas(self, ambiente: Ambiente, dia: date | None = None) -> Leitura[list[DuracaoDasConversas]]: ...
+
+    def envios_do_whatsapp(self, ambiente: Ambiente, dia: date | None = None) -> Leitura[list[EnvioDoWhatsapp]]: ...
+
+    # Relatório da Aplicação: atendimento humano
+    def encaminhamentos_por_dia(self, ambiente: Ambiente) -> Leitura[list[EncaminhamentoNoDia]]: ...
+
+    # Atendimento: cada problema, uma linha por ocorrência
+    def ocorrencias(self, origem: Origem, dia: date | None = None) -> Leitura[OcorrenciasDoPeriodo]: ...
+
+    # Infra: hora a hora, nas últimas 24 horas ou no dia (ou hora) escolhido; e os 14 dias, hora a hora
+    def infra_por_hora(self, ambiente: Ambiente, dia: date | None = None) -> Leitura[list[HoraDaInfra]]: ...
+
+    def infra_por_dia(self, ambiente: Ambiente) -> Leitura[list[HoraDaInfra]]: ...
+
+    # QA: as rodadas (ponta a ponta do CI e QA da staging), os defeitos e o gasto; e os alertas do CodeQL
+    def qa(self) -> Leitura[QA]: ...
+
+    def alertas_de_codigo(self) -> Leitura[list[AlertaDeCodigo]]: ...
+
+    # Observatório da IA e Relatório da Aplicação: a comparação de tom mais nova e as notas da equipe
+    def tom_da_ia(self) -> Leitura[TomDaIA]: ...
+
+    # O tom das perguntas de verdade, nos 30 dias de logs, por lugar e modelo
+    def tom_na_producao(self) -> Leitura[list[TomNaProducao]]: ...

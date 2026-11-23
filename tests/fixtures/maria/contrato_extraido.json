@@ -1,0 +1,197 @@
+{
+  "origem": {
+    "repositorio": "dgd-dprj/maria-langgraph-pp",
+    "branch": "feat/508-tom-qwen",
+    "commit": "705325d34906b2964289af2dae93a44484ea6ad6",
+    "extraido_em": "2026-11-17"
+  },
+  "eventos": {
+    "assunto_guardado_aberto": [
+      "chatId",
+      "flowId"
+    ],
+    "assunto_guardado_redirecionado": [
+      "chatId",
+      "destino",
+      "status",
+      "tipoCaso"
+    ],
+    "assunto_guardado_retomado": [
+      "chatId"
+    ],
+    "assuntos_em_aberto_listados": [
+      "chatId",
+      "quantos"
+    ],
+    "atendimento_criado": [
+      "chatId",
+      "fluxoId"
+    ],
+    "atendimento_expirado": [
+      "chatId",
+      "fluxoId"
+    ],
+    "atendimento_finalizado": [
+      "chatId",
+      "destino",
+      "fluxoId",
+      "motivoHandoff",
+      "status",
+      "statusFinal",
+      "tokensGastos"
+    ],
+    "atendimento_sem_checkpoint": [
+      "chatId",
+      "fluxoId"
+    ],
+    "conversa_encerrada": [
+      "chatId",
+      "emAberto"
+    ],
+    "cpf_digito_invalido": [
+      "tentativa"
+    ],
+    "desambiguacao_tom": [
+      "ateLimiteDePalavras",
+      "comEmoji",
+      "emojiTirado",
+      "modelo",
+      "ofereceAlternativas",
+      "palavras",
+      "semEmojiNoTemaSensivel",
+      "semTermoTecnico",
+      "temAcolhimento",
+      "temaSensivel",
+      "terminaEmPergunta"
+    ],
+    "email_nudecon_enviado": [
+      "anexosFalhos",
+      "protocolo",
+      "status",
+      "tentativa"
+    ],
+    "email_nudecon_falha": [
+      "motivo",
+      "protocolo",
+      "status",
+      "tentativa",
+      "tipoErro"
+    ],
+    "fluxos_ligados": [
+      "ambiente",
+      "fluxosEmTesteDesligados",
+      "fluxosLigados"
+    ],
+    "orquestrador_finalizado_sem_fluxo": [
+      "chatId",
+      "destino",
+      "rodada",
+      "status",
+      "tipoCaso",
+      "tokensGastosTotal"
+    ],
+    "orquestrador_fluxo_identificado": [
+      "chatId",
+      "flowId",
+      "rodada",
+      "tokensGastosTotal"
+    ],
+    "orquestrador_inconsistencia": [
+      "chatId",
+      "destino",
+      "flowId",
+      "status"
+    ],
+    "orquestrador_pergunta_enviada": [
+      "chatId",
+      "rodada",
+      "status",
+      "tipoResposta",
+      "tokensGastosTotal"
+    ],
+    "orquestrador_redirecionado": [
+      "chatId",
+      "destino",
+      "rodada",
+      "status",
+      "tipoCaso",
+      "tokensGastosTotal"
+    ],
+    "parentesco_fora_da_lista": [
+      "motivo"
+    ],
+    "parentesco_sem_ia": [],
+    "pergunta_enviada": [
+      "chatId",
+      "fluxoId",
+      "status",
+      "tipoResposta",
+      "tokensGastosTotal",
+      "viaIA"
+    ],
+    "proximo_assunto_aberto": [
+      "chatId",
+      "flowId",
+      "posicao"
+    ],
+    "proximo_assunto_redirecionado": [
+      "chatId",
+      "posicao",
+      "tipoCaso"
+    ],
+    "resposta_recebida": [
+      "chatId",
+      "fluxoId"
+    ],
+    "ttl_confirmacao_repetida": [
+      "chatId",
+      "fluxoId"
+    ],
+    "ttl_confirmacao_solicitada": [
+      "chatId",
+      "fluxoId",
+      "horasInativo"
+    ],
+    "verde_chamada": [
+      "chamada",
+      "duracaoMs",
+      "err",
+      "resultado",
+      "status",
+      "tentativa",
+      "tipoErro"
+    ],
+    "whatsapp_bridge_erro": [
+      "chatId",
+      "status"
+    ],
+    "whatsapp_envio_erro": [
+      "chatId",
+      "duracaoMs",
+      "erro"
+    ],
+    "whatsapp_envio_falhou": [
+      "chatId",
+      "duracaoMs",
+      "status"
+    ],
+    "whatsapp_envio_mock": [
+      "chatId"
+    ],
+    "whatsapp_envio_ok": [
+      "chatId",
+      "duracaoMs"
+    ],
+    "whatsapp_status_entrega": [
+      "erroCodigo",
+      "erroTitulo",
+      "status"
+    ]
+  },
+  "linhas_do_workflow": [
+    "status atual:",
+    "expiraEm=",
+    "token renovado, gravado no Secrets Manager",
+    "container novo no ar"
+  ]
+}

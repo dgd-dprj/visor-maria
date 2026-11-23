@@ -1,0 +1,17 @@
+.venv
+__pycache__
+*.py[cod]
+.pytest_cache
+.ruff_cache
+.mypy_cache
+dist
+.env
+*.log
+.git
+.github
+tests
+scripts
+docs
+# Material do rascunho: fica na pasta, não vai para a imagem.
+*.html
+painel-maria-LEIA.md
