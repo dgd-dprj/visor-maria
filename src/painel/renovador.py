@@ -22,6 +22,7 @@ import argparse
 import base64
 import json
 import logging
+import os
 import sys
 import time
 import urllib.error
@@ -267,6 +268,29 @@ class SegredosAws:
         self._c.delete_secret(SecretId=nome, ForceDeleteWithoutRecovery=True)
 
 
+class HistoricoNoCloudWatch:
+    """Grava a linha diária no grupo que a tela Credencial lê (RENOVADOR_GRUPO_DE_LOGS).
+
+    O comando roda no GitHub Actions, que não tem grupo de logs próprio na AWS: a linha vai para o
+    CloudWatch daqui. Falhar ao gravar o histórico nunca desfaz uma renovação."""
+
+    def __init__(self, cliente: Any, grupo: str) -> None:
+        self._c = cliente
+        self._grupo = grupo
+
+    def gravar(self, ambiente: str, linha: str, agora: datetime) -> None:
+        fluxo = f"{agora:%Y-%m-%d}/{ambiente}"
+        try:
+            self._c.create_log_stream(logGroupName=self._grupo, logStreamName=fluxo)
+        except self._c.exceptions.ResourceAlreadyExistsException:
+            pass
+        self._c.put_log_events(
+            logGroupName=self._grupo,
+            logStreamName=fluxo,
+            logEvents=[{"timestamp": int(agora.timestamp() * 1000), "message": linha}],
+        )
+
+
 class ServicoEcs:
     def __init__(self, cliente: Any) -> None:
         self._c = cliente
@@ -286,6 +310,8 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     segredos = SegredosAws(boto3.client("secretsmanager", region_name=REGIAO))
     servico = ServicoEcs(boto3.client("ecs", region_name=REGIAO))
+    grupo = os.environ.get("RENOVADOR_GRUPO_DE_LOGS")
+    historico = HistoricoNoCloudWatch(boto3.client("logs", region_name=REGIAO), grupo) if grupo else None
     precisa_de_gente = False
     for ambiente in args.ambiente or sorted(SERVICOS):
         try:
@@ -295,7 +321,14 @@ def main(argv: list[str] | None = None) -> int:
             precisa_de_gente = True
             continue
         # Uma linha JSON por ambiente e por dia, sem token nem client id: a tela Credencial lê daqui.
-        registro.info(linha_do_historico(relato))
+        linha = linha_do_historico(relato)
+        registro.info(linha)
+        if historico is not None:
+            try:
+                historico.gravar(relato.ambiente, linha, relato.em)
+            except Exception as erro:  # noqa: BLE001 - só o tipo vai para o log
+                registro.error("[%s] não consegui gravar o histórico no CloudWatch (%s)", relato.ambiente, type(erro).__name__)
+                precisa_de_gente = True
         precisa_de_gente = precisa_de_gente or relato.resultado in PEDEM_ATENCAO
     return 1 if precisa_de_gente else 0
 

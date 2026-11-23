@@ -1,32 +1,31 @@
 # Renovação do token do Verde (visor-maria#14)
 
-O papel e o agendamento diário do `python -m painel.renovador`. A decisão e as proteções estão em
-`docs/decisoes.md` (2026-11-23).
+O papel IAM e o grupo de logs do `python -m painel.renovador`, que roda no workflow
+`.github/workflows/renovar-token-verde.yml` (Actions do visor-maria, com o provedor OIDC do GitHub que já existe na conta).
+A decisão e as proteções estão em `docs/decisoes.md` (2026-11-23).
 
-- **Papel da tarefa** (`visor-maria-renovador`): `GetSecretValue` e `PutSecretValue` só em
-  `maria-langgraph-pp-{prod,release}/app`; criar, descrever e apagar só as travas
-  `visor-maria/trava-renovacao-*`; `ecs:UpdateService` só em `api-prod-sp` e `api-release-sp`.
-- **Agendamento**: uma tarefa Fargate por dia, **desligado por padrão** (`agendamento_ligado = false`),
-  sem nenhuma repetição automática: o refresh invalida o token antigo, e repetir às cegas pode
-  perder o novo.
+- **Papel** (`visor-maria-renovador`): só a branch `main` deste repositório o assume. `Get/PutSecretValue` só em
+  `maria-langgraph-pp-{prod,release}/app`; criar, descrever e apagar só as travas `visor-maria/trava-renovacao-*`;
+  `ecs:UpdateService` só em `api-prod-sp` e `api-release-sp`; escrever só no grupo de logs abaixo.
+- **Grupo de logs** `/ecs/visor-maria/renovador`: a linha diária (validade, sem token) que a tela Credencial lê.
 
-**Antes de ligar:** o workflow `verificar-token-verde.yml` da Maria (#187) também renova (com 7
-dias ou menos). Ele age bem antes do 1 dia do Visor, então os dois não se pisam no dia a dia, mas
-decidam se o workflow sai de vez. Dependências: cluster, imagem no ECR e subredes da etapa 1
-(README principal, "Permissões", item 8), que ainda não existem.
+## Ligar
+
+O agendamento fica **desligado**: o workflow só roda por agenda quando a variável do repositório
+`RENOVADOR_LIGADO` vale `true`. O disparo manual (`workflow_dispatch`) existe sempre e começa em modo simulação.
+
+1. `terraform apply` (abaixo) e copiar `papel_da_renovacao` para a variável `AWS_ROLE_ARN_RENOVADOR` do repositório.
+2. Testar com o disparo manual em simulação (lê o segredo, decide e registra; não chama o Verde nem grava).
+3. Decidir o que fazer com o workflow da Maria (#187): ele também renova (com 7 dias ou menos). Os dois não se
+   pisam no dia a dia, porque o dele age bem antes do 1 dia do Visor, mas duas renovações ao mesmo tempo
+   invalidariam o token uma da outra. Só então criar `RENOVADOR_LIGADO = true`.
 
 ## Como aplicar
 
-**Quem aplica é o Ícaro**, com credencial que crie papéis IAM, tarefa ECS e agendamento:
+**Quem aplica é o Ícaro**, com credencial que crie papéis IAM e grupo de logs:
 
 ```sh
 cd infra/renovador
-cat > renovador.auto.tfvars <<'EOF2'
-cluster_do_visor   = "arn:aws:ecs:sa-east-1:<conta>:cluster/visor-maria"
-imagem             = "<conta>.dkr.ecr.sa-east-1.amazonaws.com/visor-maria:<tag>"
-subredes           = ["subnet-..."]
-grupo_de_seguranca = "sg-..."
-EOF2
 terraform init
 terraform plan    # conferir: só recursos visor-maria-*; nada na Maria
 terraform apply

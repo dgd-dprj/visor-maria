@@ -162,3 +162,30 @@ def test_sem_renovar_o_historico_traz_a_validade_que_vale():
     valida = AGORA + timedelta(days=7)
     relato, _, _ = rodar(SegredosFalsos(jwt(valida)))
     assert json.loads(linha_do_historico(relato))["validaAte"] == valida.isoformat()
+
+
+def test_historico_no_cloudwatch_cria_o_fluxo_e_grava_a_linha():
+    from painel.renovador import HistoricoNoCloudWatch
+
+    class Excecoes:
+        class ResourceAlreadyExistsException(Exception):
+            pass
+
+    class Logs:
+        exceptions = Excecoes
+
+        def __init__(self, ja_existe=False):
+            self.ja_existe, self.eventos = ja_existe, []
+
+        def create_log_stream(self, **_):
+            if self.ja_existe:
+                raise Excecoes.ResourceAlreadyExistsException()
+
+        def put_log_events(self, **kw):
+            self.eventos.append(kw)
+
+    for ja_existe in (False, True):
+        logs = Logs(ja_existe)
+        HistoricoNoCloudWatch(logs, "/grupo").gravar("prod", '{"evento":"renovacao_verde"}', AGORA)
+        assert logs.eventos[0]["logStreamName"] == "2026-11-23/prod"
+        assert logs.eventos[0]["logEvents"][0]["message"] == '{"evento":"renovacao_verde"}'

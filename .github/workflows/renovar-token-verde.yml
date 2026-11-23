@@ -1,0 +1,48 @@
+name: Renovar token Verde
+
+# Issue #14: renova o token do Verde quando falta 1 dia para vencer e redeploya o ECS da Maria.
+# DESLIGADO por agenda até a variável do repositório RENOVADOR_LIGADO valer "true": o workflow
+# verificar-token-verde.yml da Maria (#187) também renova, e duas renovações ao mesmo tempo
+# invalidariam o token uma da outra. Ver infra/renovador/README.md.
+on:
+  schedule:
+    - cron: "0 13 * * *" # 13:00 UTC, 10:00 em Brasília, depois da conferência da Maria
+  workflow_dispatch:
+    inputs:
+      simular:
+        description: "Só decide e registra: não chama o Verde nem grava nada"
+        type: boolean
+        default: true
+
+permissions:
+  id-token: write # OIDC para a AWS
+  contents: read
+
+# Uma execução por vez: o refresh invalida o token antigo.
+concurrency:
+  group: renovar-token-verde
+  cancel-in-progress: false
+
+jobs:
+  renovar:
+    if: github.event_name == 'workflow_dispatch' || vars.RENOVADOR_LIGADO == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Instalar Python e dependências
+        run: uv sync --frozen --no-dev
+
+      - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a # v4.3.1
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN_RENOVADOR }}
+          aws-region: sa-east-1
+
+      - name: Renovar se faltar 1 dia ou menos
+        env:
+          RENOVADOR_GRUPO_DE_LOGS: /ecs/visor-maria/renovador
+          SIMULAR: ${{ github.event_name == 'workflow_dispatch' && inputs.simular && '--simular' || '' }}
+        run: uv run --no-dev python -m painel.renovador $SIMULAR
