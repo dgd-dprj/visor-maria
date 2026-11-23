@@ -49,3 +49,21 @@ variable "instancias" {
   type        = number
   default     = 0
 }
+
+variable "horario_comercial" {
+  description = "Desliga o painel à noite e liga de manhã (escala.tf). Com false, a tarefa fica ligada o tempo todo."
+  type        = bool
+  default     = true
+}
+
+variable "hora_de_desligar" {
+  description = "Quando desligar, em cron do EventBridge (minuto hora dia mês dia-da-semana ano), no fuso de Brasília. Padrão: todo dia às 21:00."
+  type        = string
+  default     = "0 21 * * ? *"
+}
+
+variable "hora_de_ligar" {
+  description = "Quando ligar, no mesmo formato e fuso. Padrão: todo dia às 08:00."
+  type        = string
+  default     = "0 8 * * ? *"
+}

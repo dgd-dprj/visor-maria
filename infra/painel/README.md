@@ -14,6 +14,7 @@ consultadas por nome, e nada é acrescentado dentro de recurso dela (docs/deciso
 | `visor-maria-painel` | papel da tarefa, **só leitura**: Logs Insights, métricas, alarmes e o túnel (6) |
 | `visor-maria-painel-execucao` | puxa a imagem, escreve o log e lê o token do GitHub (8) |
 | `visor-maria-deploy` | papel do GitHub por OIDC (só a `main`): push no ECR do painel e `ecs:UpdateService` no serviço dele (7) |
+| `aws_appautoscaling_*` | desliga às 21:00 e liga às 08:00 (uso interno) |
 | `aws_budgets_budget.painel` | aviso a 80% do gasto e a 100% da previsão de US$ 20 por mês (9) |
 
 O papel da tarefa já inclui a leitura de `/ecs/visor-maria/renovador`, de onde a tela Credencial lê as renovações (#14).
@@ -34,12 +35,17 @@ terraform plan    # conferir: só recursos visor-maria*; na Maria, nada é alter
 terraform apply
 ```
 
+**Horário:** o painel desliga todo dia às 21:00 e liga às 08:00, no fuso de Brasília (`escala.tf`, Application
+Auto Scaling; `hora_de_desligar`, `hora_de_ligar` e `horario_comercial = false` para ficar sempre ligado). O túnel
+cai às 21:00, e a tela abre com o cache frio de manhã. Aplicar o Terraform com `instancias = 1` à noite liga o
+painel até o próximo desligamento.
+
 O serviço nasce com `instancias = 0`. Para ligar:
 
 1. Guardar o token do GitHub (conta de serviço, só `Actions: read` e `Metadata: read` do `maria-langgraph-pp`):
    `aws secretsmanager put-secret-value --secret-id visor-maria/github-token --secret-string <token> --region sa-east-1`
 2. Enviar a primeira imagem ao ECR (`terraform output repositorio_ecr`): `docker build`, `docker tag` e `docker push` com `:latest`.
-3. `terraform apply -var instancias=1` (ou `instancias = 1` no `.auto.tfvars`).
+3. `terraform apply -var instancias=1` (ou `instancias = 1` no `.auto.tfvars`): o serviço sobe na hora, e o agendamento passa a valer.
 4. Guardar `terraform output papel_de_deploy` na variável `AWS_ROLE_ARN_DEPLOY` do repositório, para o workflow de deploy.
 5. Ativar a etiqueta de custo `projeto` no Billing, senão o orçamento não enxerga o gasto do painel.
 

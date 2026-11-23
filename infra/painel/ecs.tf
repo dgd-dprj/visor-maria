@@ -67,8 +67,9 @@ resource "aws_ecs_service" "painel" {
     assign_public_ip = false # sem endereço público
   }
 
-  # O deploy troca a imagem por fora (workflow), então a revisão da tarefa não é do Terraform.
+  # O deploy troca a imagem por fora (workflow), então a revisão da tarefa não é do Terraform; e o
+  # agendamento (escala.tf) liga e desliga o serviço, então a quantidade de tarefas também não.
   lifecycle {
-    ignore_changes = [task_definition]
+    ignore_changes = [task_definition, desired_count]
   }
 }
