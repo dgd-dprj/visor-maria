@@ -125,6 +125,11 @@ segurança, nunca rodando junto na mesma hora.
 `ecs:UpdateService` nos serviços `api-prod-sp` e `api-release-sp`. Não é o
 papel da tarefa do painel, que segue só leitura.
 
+**Terraform.** `infra/renovador`: papel com essa permissão e agendamento diário
+(EventBridge Scheduler + tarefa Fargate), **desligado por padrão** e sem repetição
+automática. Falta aplicar (Ícaro) e depende do cluster, da imagem e das subredes da
+etapa 1.
+
 **Na tela Credencial.** O comando grava uma linha JSON por ambiente e por dia em
 `/ecs/visor-maria/renovador` (evento `renovacao_verde`: ambiente, resultado,
 `validaAte`; nunca o token), mesmo quando não renova. A tela lê esse grupo pelo
@@ -134,9 +139,8 @@ ao Verde na abertura da página, para o token não entrar no servidor web (Ícar
 23/11). Se o grupo não existe ou o papel do painel não o lê, a tela segue só com
 o workflow. A validade atualiza uma vez por dia, não ao vivo.
 
-**Pendente.** Papel IAM e agendamento em Terraform (PR #17); dar ao papel da
-tarefa do painel a leitura do grupo `/ecs/visor-maria/renovador` (README,
-"Permissões", item 6).
+**Pendente.** Dar ao papel da tarefa do painel a leitura do grupo
+`/ecs/visor-maria/renovador` (README, "Permissões", item 6).
 
 ## 2026-11-10: a regra 4 passa a ser "nunca identificar a conversa"
 
