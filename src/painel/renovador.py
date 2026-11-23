@@ -273,9 +273,7 @@ def main(argv: list[str] | None = None) -> int:
     precisa_de_gente = False
     for ambiente in args.ambiente or sorted(SERVICOS):
         try:
-            relato = renovar_ambiente(
-                ambiente, segredos=segredos, verde=VerdeHttp(), servico=servico, agora=datetime.now(UTC), simular=args.simular
-            )
+            relato = renovar_ambiente(ambiente, segredos=segredos, verde=VerdeHttp(), servico=servico, agora=datetime.now(UTC), simular=args.simular)
         except RenovacaoInterrompida as erro:
             registro.error("%s", erro)
             precisa_de_gente = True
