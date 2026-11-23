@@ -125,8 +125,12 @@ segurança, nunca rodando junto na mesma hora.
 `ecs:UpdateService` nos serviços `api-prod-sp` e `api-release-sp`. Não é o
 papel da tarefa do painel, que segue só leitura.
 
-**Pendente.** Papel IAM e agendamento (uma execução por dia) em Terraform; o
-quadro de renovações na tela Credencial ainda lê só o workflow.
+**Terraform.** `infra/renovador`: papel com essa permissão e agendamento diário
+(EventBridge Scheduler + tarefa Fargate), **desligado por padrão** e sem repetição
+automática. Falta aplicar (Ícaro) e depende do cluster, da imagem e das subredes da
+etapa 1.
+
+**Pendente.** O quadro de renovações na tela Credencial ainda lê só o workflow.
 
 ## 2026-11-10: a regra 4 passa a ser "nunca identificar a conversa"
 
