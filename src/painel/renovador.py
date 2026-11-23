@@ -123,6 +123,7 @@ class Relato:
     ambiente: str
     resultado: Resultado
     em: datetime
+    valida_ate: datetime | None = None  # a validade do token que ficou valendo; é o que a tela Credencial lê do log
 
 
 def renovar_ambiente(
@@ -137,13 +138,16 @@ def renovar_ambiente(
 ) -> Relato:
     nome = f"maria-langgraph-pp-{ambiente}/app"
 
-    def relato(resultado: Resultado) -> Relato:
-        return Relato(ambiente, resultado, agora)
+    valida_agora: datetime | None = None
+
+    def relato(resultado: Resultado, valida: datetime | None = None) -> Relato:
+        return Relato(ambiente, resultado, agora, valida or valida_agora)
 
     segredo = segredos.ler(nome)
     valida_ate = validade_do_token(segredo.get("VERDE_JWT_TOKEN", ""))
     if valida_ate is None:
         raise RenovacaoInterrompida(f"[{ambiente}] o token do segredo não tem validade legível")
+    valida_agora = valida_ate
     parar = decidir(valida_ate, agora)
     if parar is not None:
         return relato(parar)
@@ -173,10 +177,22 @@ def renovar_ambiente(
             servico.redeploy(CLUSTER, SERVICOS[ambiente])
         except Exception as erro:  # noqa: BLE001 - só o tipo vai para o log
             registro.error("[%s] token renovado e gravado, mas o redeploy falhou (%s)", ambiente, type(erro).__name__)
-            return relato(Resultado.REDEPLOY_FALHOU)
-        return relato(Resultado.RENOVADA)
+            return relato(Resultado.REDEPLOY_FALHOU, validade_do_token(novo))
+        return relato(Resultado.RENOVADA, validade_do_token(novo))
     finally:
         segredos.soltar_trava(f"visor-maria/trava-renovacao-{ambiente}")
+
+
+def linha_do_historico(relato: Relato) -> str:
+    return json.dumps(
+        {
+            "evento": "renovacao_verde",
+            "ambiente": relato.ambiente,
+            "resultado": relato.resultado.value,
+            "validaAte": relato.valida_ate.isoformat() if relato.valida_ate else None,
+        },
+        ensure_ascii=False,
+    )
 
 
 def _revogado(corpo: Any) -> bool:
@@ -278,7 +294,8 @@ def main(argv: list[str] | None = None) -> int:
             registro.error("%s", erro)
             precisa_de_gente = True
             continue
-        registro.info("renovacao_verde ambiente=%s resultado=%s em=%s", relato.ambiente, relato.resultado.value, relato.em.isoformat())
+        # Uma linha JSON por ambiente e por dia, sem token nem client id: a tela Credencial lê daqui.
+        registro.info(linha_do_historico(relato))
         precisa_de_gente = precisa_de_gente or relato.resultado in PEDEM_ATENCAO
     return 1 if precisa_de_gente else 0
 

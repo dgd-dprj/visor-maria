@@ -143,3 +143,22 @@ def test_nenhum_log_leva_token_ou_client_id(caplog):
     s = SegredosFalsos(jwt(AGORA + timedelta(hours=20)), falhas_na_gravacao=1)
     rodar(s)
     assert "token-novo-ficticio" not in caplog.text and "cliente-ficticio" not in caplog.text
+
+
+def test_linha_do_historico_leva_so_ambiente_resultado_e_validade():
+    from painel.renovador import linha_do_historico
+
+    s = SegredosFalsos(jwt(AGORA + timedelta(hours=20)))
+    relato, _, _ = rodar(s)
+    linha = json.loads(linha_do_historico(relato))
+    assert set(linha) == {"evento", "ambiente", "resultado", "validaAte"}
+    assert linha["resultado"] == "renovada" and "token" not in linha_do_historico(relato)
+    assert datetime.fromisoformat(linha["validaAte"]) == datetime.fromisoformat(linha["validaAte"]).astimezone(UTC)
+
+
+def test_sem_renovar_o_historico_traz_a_validade_que_vale():
+    from painel.renovador import linha_do_historico
+
+    valida = AGORA + timedelta(days=7)
+    relato, _, _ = rodar(SegredosFalsos(jwt(valida)))
+    assert json.loads(linha_do_historico(relato))["validaAte"] == valida.isoformat()

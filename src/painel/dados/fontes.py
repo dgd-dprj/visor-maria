@@ -164,13 +164,21 @@ def fonte_resumo_do_dia(ambiente: Ambiente, dia: date | None = None) -> Fonte:
     )
 
 
+# O comando de renovação (painel/renovador.py, issue #14) grava uma linha JSON por ambiente e por dia, sem token.
+GRUPO_DO_RENOVADOR = "/ecs/visor-maria/renovador"
+REGIAO_DO_RENOVADOR = "sa-east-1"
+AMBIENTE_NO_RENOVADOR = {Ambiente.PRODUCAO: "prod", Ambiente.RELEASE: "release"}
+
+
 def fonte_credencial(ambiente: Ambiente) -> Fonte:
     # A validade vem do log da conferência diária ("status atual ... expiraEm"),
     # e não do segredo: o painel nunca lê a credencial.
     return Fonte(
         curto=f"GitHub e {LOGS_DO[ambiente]}",
-        nome="Validade pelo log da conferência diária da credencial; última consulta aceita pelos logs",
-        identificador=f'verificar-token-verde.yml, linha "status atual"; {GRUPO_DE_LOGS[ambiente]}, evento verde_chamada',
+        nome="Validade pelo log da conferência diária da credencial e pelo log da renovação do Visor; última consulta aceita pelos logs",
+        identificador=(
+            f'verificar-token-verde.yml, linha "status atual"; {GRUPO_DO_RENOVADOR}, evento renovacao_verde; {GRUPO_DE_LOGS[ambiente]}, evento verde_chamada'
+        ),
         atraso="até 1 dia na validade, segundos na última consulta",
     )
 
@@ -187,8 +195,8 @@ def fonte_rotinas() -> Fonte:
 def fonte_renovacoes() -> Fonte:
     return Fonte(
         curto="GitHub",
-        nome="Renovações feitas pela conferência diária da credencial",
-        identificador='verificar-token-verde.yml, linhas "token renovado" e "container novo no ar"',
+        nome="Renovações feitas pela conferência diária da credencial e pelo comando do Visor",
+        identificador=f'verificar-token-verde.yml, linhas "token renovado" e "container novo no ar"; {GRUPO_DO_RENOVADOR}, evento renovacao_verde',
         atraso="minutos",
     )
 

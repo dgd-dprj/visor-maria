@@ -158,6 +158,8 @@ PROBLEMAS_POR_EVENTO = (
 )
 FUNCOES_DE_IA = ("classificar", "desambiguar", "extrair", "reescrever", "sumarizar")
 SUBIDAS_DO = {Ambiente.PRODUCAO: "deploy-prod.yml", Ambiente.RELEASE: "deploy-release.yml"}
+# Resultados do comando de renovação em que o token foi trocado (o segundo, com o redeploy que falhou).
+RENOVOU = {"renovada", "redeploy_falhou"}
 NOME_NA_CONFERENCIA = {Ambiente.PRODUCAO: "prod", Ambiente.RELEASE: "release"}
 
 
@@ -692,23 +694,55 @@ class FonteReal:
                 resultado[ambiente] = list(grupo.map(lambda job, a=ambiente: self._linhas_da_conferencia(job, a), [j for j in do_ambiente if j]))
         return resultado
 
+    def _do_renovador(self, ambiente: Ambiente, agora: datetime) -> list[tuple[datetime, str, datetime | None]]:
+        """O que o comando de renovação do Visor registrou (momento, resultado, validade), do mais velho ao mais novo.
+
+        O grupo só existe depois que o Terraform de `infra/renovador` for aplicado, e o papel da tarefa do painel
+        precisa poder lê-lo. Enquanto isso, a tela segue só com o workflow: falha aqui não derruba a Credencial."""
+        consulta = (
+            f'filter evento = "renovacao_verde" and ambiente = "{fontes.AMBIENTE_NO_RENOVADOR[ambiente]}" '
+            "| fields @timestamp as quando, resultado, validaAte | sort @timestamp asc"
+        )
+        try:
+            linhas = self._consultar_em(
+                fontes.REGIAO_DO_RENOVADOR, [fontes.GRUPO_DO_RENOVADOR], agora - timedelta(days=fontes.DIAS_DO_REGISTRO), agora, consulta
+            )
+        except (ClientError, FalhaDeLeitura):
+            return []
+        registros = []
+        for linha in linhas:
+            try:
+                valida = datetime.fromisoformat(linha["validaAte"]).astimezone(FUSO) if linha.get("validaAte") else None
+                registros.append((_instante(linha["quando"]), linha.get("resultado", ""), valida))
+            except (KeyError, ValueError):
+                continue
+        return registros
+
     def credencial(self, ambiente: Ambiente) -> Leitura[Credencial]:
         def gerar(agora: datetime) -> Credencial:
             conferencias = self._conferencias(ambiente)
-            com_validade = next((c for c in conferencias if c.valida_ate is not None), None)
-            if com_validade is None or com_validade.valida_ate is None:
+            do_renovador = self._do_renovador(ambiente, agora)
+            # A validade mais recente entre as duas fontes: a conferência do workflow (até 1 dia de atraso) e o comando do Visor.
+            validades = sorted(
+                [(c.concluido_em, c.valida_ate) for c in conferencias if c.concluido_em is not None and c.valida_ate is not None]
+                + [(quando, valida) for quando, _, valida in do_renovador if valida is not None],
+                key=lambda v: v[0],
+            )
+            if not validades:
                 raise FalhaDeLeitura("Nenhuma conferência diária desde 19/09 imprimiu a validade deste ambiente.")
-            emitida = next((c.renovada_em for c in conferencias if c.renovada_em is not None), None)
+            valida_ate = validades[-1][1]
+            emitidas = [c.renovada_em for c in conferencias if c.renovada_em is not None] + [
+                quando for quando, resultado, _ in do_renovador if resultado in RENOVOU
+            ]
+            emitida = max(emitidas) if emitidas else None
             linha = self._uma(
                 [ambiente], agora - timedelta(days=30), agora, 'filter evento = "verde_chamada" and resultado = "sucesso" | stats max(@timestamp) as ultima'
             )
             ultima = conferencias[0] if conferencias else None
-            conferidas = tuple(
-                ValidadeConferida(c.concluido_em, c.valida_ate) for c in reversed(conferencias) if c.concluido_em is not None and c.valida_ate is not None
-            )
+            conferidas = tuple(ValidadeConferida(quando, valida) for quando, valida in validades)
             return Credencial(
                 emitida_em=emitida,
-                valida_ate=com_validade.valida_ate,
+                valida_ate=valida_ate,
                 ultima_aceita=_instante(linha["ultima"]) if linha.get("ultima") else None,
                 ultima_conferencia=ultima.concluido_em if ultima else None,
                 conferencia_passou=ultima.passou if ultima else None,
@@ -750,6 +784,12 @@ class FonteReal:
                 for c in self._conferencias(ambiente)
                 if c.renovada_em is not None
             ]
+            for ambiente in Ambiente:
+                renovacoes += [
+                    Renovacao(ambiente, quando, resultado == "renovada")
+                    for quando, resultado, _ in self._do_renovador(ambiente, self._agora())
+                    if resultado in RENOVOU
+                ]
             return sorted(renovacoes, key=lambda r: r.momento)
 
         return self._ler(fontes.fonte_renovacoes(), gerar)
