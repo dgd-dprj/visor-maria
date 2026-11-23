@@ -4,7 +4,7 @@ O papel IAM e o grupo de logs do `python -m painel.renovador`, que roda no workf
 `.github/workflows/renovar-token-verde.yml` (Actions do visor-maria, com o provedor OIDC do GitHub que já existe na conta).
 A decisão e as proteções estão em `docs/decisoes.md` (2026-11-23).
 
-- **Papel** (`visor-maria-renovador`): só a branch `main` deste repositório o assume. `Get/PutSecretValue` só em
+- **Papel** (`visor-maria-renovador`): só a branch `main` deste repositório o assume (a claim `sub` é a imutável, com os IDs; ver `sub_do_repositorio`). `Get/PutSecretValue` só em
   `maria-langgraph-pp-{prod,release}/app`; criar, descrever e apagar só as travas `visor-maria/trava-renovacao-*`;
   `ecs:UpdateService` só em `api-prod-sp` e `api-release-sp`; escrever só no grupo de logs abaixo.
 - **Grupo de logs** `/ecs/visor-maria/renovador`: a linha diária (validade, sem token) que a tela Credencial lê.

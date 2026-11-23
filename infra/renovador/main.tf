@@ -36,11 +36,12 @@ data "aws_iam_policy_document" "confianca_do_github" {
       variable = "token.actions.githubusercontent.com:aud"
       values   = ["sts.amazonaws.com"]
     }
-    # Só a branch main deste repositório (o agendamento e o disparo manual rodam nela).
+    # Só a branch main deste repositório (o agendamento e o disparo manual rodam nela). O repositório usa a
+    # claim `sub` imutável, com os IDs da organização e do repositório (var.sub_do_repositorio).
     condition {
       test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:dgd-dprj/visor-maria:ref:refs/heads/main"]
+      values   = ["${var.sub_do_repositorio}:ref:refs/heads/main"]
     }
   }
 }
