@@ -24,3 +24,9 @@ variable "servicos_por_ambiente" {
     release = "api-release-sp"
   }
 }
+
+variable "sub_do_repositorio" {
+  description = "Prefixo da claim `sub` do OIDC deste repositório. Vem de `gh api repos/dgd-dprj/visor-maria/actions/oidc/customization/sub` (campo sub_claim_prefix): o repositório usa a claim imutável, com os IDs da organização e do repositório, e não o nome."
+  type        = string
+  default     = "repo:dgd-dprj@337067883/visor-maria@1438801657"
+}
