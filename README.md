@@ -315,6 +315,7 @@ da Maria (as três regras estão em `docs/decisoes.md`).
 5. **Um papel para aplicar o Terraform do painel**, restrito a recursos com prefixo `visor-maria`. Com ele, a Nicole aplica dali em diante sem acesso a nada da Maria. (A credencial dela hoje não cria recursos na AWS, pelo que os testes de leitura mostraram; ela não tem permissão nem para simular a própria política.)
 6. **Papel da tarefa do painel, só leitura:**
    - Logs Insights nos grupos `/ecs/maria-langgraph-pp/api` (em `us-east-1`) e `/ecs/maria-langgraph-pp-release-sp/api` (em `sa-east-1`): `logs:StartQuery`, `logs:GetQueryResults`, `logs:StopQuery` e `logs:DescribeLogGroups`;
+   - o mesmo Logs Insights no grupo `/ecs/visor-maria/renovador` (em `sa-east-1`), de onde a tela Credencial lê a validade e as renovações feitas pelo Visor (issue #14). Sem essa permissão a tela segue só com o workflow;
    - métricas: `cloudwatch:GetMetricData` e `cloudwatch:ListMetrics` (`AWS/ApplicationELB`, `AWS/ECS`, `ECS/ContainerInsights`, `AWS/Bedrock` e, para a tela Infra, `AWS/CloudFront`, `AWS/RDS`, `AWS/NATGateway` e `AWS/Lambda`); o `GetMetricData` exige `"Resource": "*"`;
    - alertas (quadro "Alertas" da Agora): `cloudwatch:DescribeAlarms` e `cloudwatch:DescribeAlarmHistory`, nos alarmes `visor-maria-*` de `infra/alertas`;
    - opcionais: `pricing:GetProducts`, para conferir preço, e `rds:DescribeDBInstances`, para o rateio do stack antigo.

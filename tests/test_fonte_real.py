@@ -164,3 +164,30 @@ def test_a_faixa_sem_aws_so_aparece_sem_credencial(tmp_path: Path, monkeypatch: 
         assert not dados.sem_credencial_da_aws()
     finally:
         dados.sem_credencial_da_aws.cache_clear()
+
+
+def test_credencial_usa_a_validade_do_log_do_renovador_quando_e_mais_nova(fonte: FonteReal, monkeypatch: pytest.MonkeyPatch) -> None:
+    fonte._github = GitHubFalso(LOG)  # type: ignore[assignment]
+    monkeypatch.setattr(fonte, "_varrer_conferencias", lambda: {a: [fonte._linhas_da_conferencia(_job(), a)] for a in Ambiente})
+    monkeypatch.setattr(fonte, "_uma", lambda *_, **__: {})
+    linhas = [{"quando": "2026-10-26 12:00:00.000", "resultado": "renovada", "validaAte": "2026-11-25T12:00:00+00:00"}]
+    monkeypatch.setattr(fonte, "_consultar_em", lambda *_, **__: linhas)
+    leitura = fonte.credencial(Ambiente.PRODUCAO)
+    assert leitura.valor is not None and leitura.valor.valida_ate == datetime(2026, 11, 25, 9, 0, tzinfo=FUSO)
+    renovacoes = fonte.renovacoes().valor
+    assert renovacoes is not None and any(r.container_novo_no_ar and r.ambiente is Ambiente.PRODUCAO for r in renovacoes)
+
+
+def test_sem_o_grupo_do_renovador_a_credencial_segue_com_o_workflow(fonte: FonteReal, monkeypatch: pytest.MonkeyPatch) -> None:
+    from botocore.exceptions import ClientError
+
+    fonte._github = GitHubFalso(LOG)  # type: ignore[assignment]
+    monkeypatch.setattr(fonte, "_varrer_conferencias", lambda: {a: [fonte._linhas_da_conferencia(_job(), a)] for a in Ambiente})
+    monkeypatch.setattr(fonte, "_uma", lambda *_, **__: {})
+
+    def sem_grupo(*_: Any, **__: Any) -> Any:
+        raise ClientError({"Error": {"Code": "ResourceNotFoundException", "Message": "x"}}, "StartQuery")
+
+    monkeypatch.setattr(fonte, "_consultar_em", sem_grupo)
+    leitura = fonte.credencial(Ambiente.PRODUCAO)
+    assert leitura.valor is not None and leitura.valor.valida_ate == datetime(2026, 11, 1, 9, 28, tzinfo=FUSO)
