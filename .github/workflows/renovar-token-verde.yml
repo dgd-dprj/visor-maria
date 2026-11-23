@@ -6,7 +6,7 @@ name: Renovar token Verde
 # invalidariam o token uma da outra. Ver infra/renovador/README.md.
 on:
   schedule:
-    - cron: "0 13 * * *" # 13:00 UTC, 10:00 em Brasília, depois da conferência da Maria
+    - cron: "0 5 * * *" # 05:00 UTC, 02:00 em Brasília: o redeploy do ECS cai fora do horário de uso (o GitHub pode atrasar a execução)
   workflow_dispatch:
     inputs:
       simular:
