@@ -4,17 +4,7 @@ variable "regiao" {
   default     = "sa-east-1"
 }
 
-variable "vpc_da_maria" {
-  description = "Nome (tag Name) da VPC da Maria onde as subredes privadas são achadas. Só é consultada: nada é alterado nela (docs/decisoes.md, 2026-10-26, regras 2 e 3)."
-  type        = string
-  default     = "maria-langgraph-pp-release-sp"
-}
 
-variable "subredes_privadas" {
-  description = "Sufixos (tag Name = <vpc>-<sufixo>) das subredes privadas da tarefa. Precisam sair para a AWS e o GitHub pelo NAT que já existe."
-  type        = list(string)
-  default     = ["private-0", "private-1"]
-}
 
 variable "ler_custo" {
   description = "Libera ce:GetCostAndUsage (Cost Explorer) ao papel da tarefa, para a tela Relatório da Aplicação mostrar a fatura. Decisão do Ícaro (README, item 3): lê o custo da conta toda, com os outros projetos. Desligado por padrão."
@@ -48,21 +38,7 @@ variable "emails_do_orcamento" {
 
 
 
-variable "ips_permitidos" {
-  description = <<-EOT
-    Quem pode abrir o painel pelo CloudFront, em CIDR (por exemplo "203.0.113.4/32"). Sem login (a autenticação fica
-    para depois), **uma lista vazia deixa o painel aberto a qualquer pessoa na internet**: o painel mostra a validade da
-    credencial do Verde, gasto, infraestrutura e problemas da Maria (só agregados, nenhuma conversa). Com IPs, um WAF
-    bloqueia o resto (cerca de US$ 6 por mês). Sem valor padrão, para a escolha ser feita de propósito no apply.
-  EOT
-  type        = list(string)
-}
 
-variable "paises_permitidos" {
-  description = "Países de onde o painel abre (código ISO de duas letras). Uma defesa a mais enquanto não há login; quem estiver fora (viagem, VPN) é bloqueado. Lista vazia libera o mundo."
-  type        = list(string)
-  default     = ["BR"]
-}
 
 variable "tipo_da_instancia" {
   description = "Tipo da EC2 do painel. t3.micro (2 vCPU, 1 GB) atende a menos de dez pessoas; o painel guarda o cache em disco, sem estado. A imagem do CI é x86; um tipo ARM (t4g) exigiria construir a imagem para ARM."
@@ -86,4 +62,15 @@ variable "hora_de_ligar" {
   description = "Quando ligar, no mesmo formato e fuso. Padrão: todo dia às 08:00."
   type        = string
   default     = "0 8 * * ? *"
+}
+
+variable "cidrs_permitidos" {
+  description = <<-EOT
+    Quem pode abrir o painel (porta 443, a única aberta), em CIDR. O padrão, ["0.0.0.0/0"], **deixa o painel aberto a qualquer
+    pessoa na internet, sem login** (decisão do Ícaro, 24/11): ele mostra validade da credencial do Verde, gasto,
+    infraestrutura e problemas da Maria, só agregados e nenhuma conversa. Para fechar, ponha só os IPs do escritório,
+    por exemplo ["203.0.113.4/32"].
+  EOT
+  type        = list(string)
+  default     = ["0.0.0.0/0"]
 }
