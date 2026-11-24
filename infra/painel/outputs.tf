@@ -20,3 +20,8 @@ output "segredo_do_github" {
   description = "Onde pôr o token do GitHub (put-secret-value)."
   value       = aws_secretsmanager_secret.github.name
 }
+
+output "endereco_do_painel" {
+  description = "Onde o painel abre (HTTPS)."
+  value       = "https://${aws_cloudfront_distribution.painel.domain_name}"
+}

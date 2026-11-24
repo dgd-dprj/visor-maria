@@ -30,3 +30,17 @@ provider "aws" {
     }
   }
 }
+
+# O WAF de um CloudFront só existe em us-east-1.
+provider "aws" {
+  alias  = "us_east_1"
+  region = "us-east-1"
+
+  default_tags {
+    tags = {
+      projeto     = "visor-maria"
+      gerenciado  = "terraform"
+      repositorio = "dgd-dprj/visor-maria"
+    }
+  }
+}

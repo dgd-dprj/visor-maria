@@ -67,3 +67,19 @@ variable "hora_de_ligar" {
   type        = string
   default     = "0 8 * * ? *"
 }
+
+variable "ips_permitidos" {
+  description = <<-EOT
+    Quem pode abrir o painel pelo CloudFront, em CIDR (por exemplo "203.0.113.4/32"). Sem login (a autenticação fica
+    para depois), **uma lista vazia deixa o painel aberto a qualquer pessoa na internet**: o painel mostra a validade da
+    credencial do Verde, gasto, infraestrutura e problemas da Maria (só agregados, nenhuma conversa). Com IPs, um WAF
+    bloqueia o resto (cerca de US$ 6 por mês). Sem valor padrão, para a escolha ser feita de propósito no apply.
+  EOT
+  type        = list(string)
+}
+
+variable "paises_permitidos" {
+  description = "Países de onde o painel abre (código ISO de duas letras). Uma defesa a mais enquanto não há login; quem estiver fora (viagem, VPN) é bloqueado. Lista vazia libera o mundo."
+  type        = list(string)
+  default     = ["BR"]
+}

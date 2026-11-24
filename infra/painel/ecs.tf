@@ -61,6 +61,15 @@ resource "aws_ecs_service" "painel" {
   launch_type            = "FARGATE"
   enable_execute_command = true # o túnel do Session Manager
 
+  load_balancer {
+    target_group_arn = aws_lb_target_group.painel.arn
+    container_name   = "painel"
+    container_port   = 8050
+  }
+
+  # A primeira abertura de uma tela com o cache vazio faz as consultas reais de uma vez (README principal).
+  health_check_grace_period_seconds = 120
+
   network_configuration {
     subnets          = data.aws_subnets.privadas.ids
     security_groups  = [aws_security_group.painel.id]

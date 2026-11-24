@@ -28,6 +28,7 @@ O papel da tarefa já inclui a leitura de `/ecs/visor-maria/renovador`, de onde 
 cd infra/painel
 cat > painel.auto.tfvars <<'EOF2'
 emails_do_orcamento = ["equipe@exemplo.org"]
+ips_permitidos      = ["203.0.113.4/32"]   # [] = aberto a qualquer pessoa
 # ler_custo         = true   # depois da decisão do item 3
 EOF2
 terraform init
@@ -49,7 +50,27 @@ O serviço nasce com `instancias = 0`. Para ligar:
 4. Guardar `terraform output papel_de_deploy` na variável `AWS_ROLE_ARN_DEPLOY` do repositório, para o workflow de deploy.
 5. Ativar a etiqueta de custo `projeto` no Billing, senão o orçamento não enxerga o gasto do painel.
 
-## Acesso
+## Online pelo CloudFront (etapa 2, sem login)
+
+O painel abre em um endereço HTTPS `*.cloudfront.net` (`terraform output endereco_do_painel`): CloudFront, VPC origin,
+balanceador **interno** (sem endereço público) e a tarefa. Quem não tem conta AWS passa a abrir o painel; o túnel
+continua existindo para quem tem. Cognito e login ficam para depois (decisão do Ícaro, 24/11).
+
+**Sem login, o painel fica público.** Ele mostra validade da credencial do Verde, gasto, infraestrutura e problemas da
+Maria, só agregados e nenhuma conversa. Duas defesas a mais, configuradas no `apply`:
+
+- `ips_permitidos` (**sem valor padrão**, para a escolha ser feita de propósito): lista de CIDRs que podem abrir o
+  painel, com um WAF que bloqueia o resto (cerca de US$ 6 por mês). `[]` deixa aberto a qualquer pessoa.
+- `paises_permitidos` (padrão `["BR"]`): quem estiver fora do país é bloqueado. `[]` libera o mundo.
+
+Cada abertura de tela faz consultas pagas ao CloudWatch, então um painel aberto aceita visitantes que gastam dinheiro:
+o alarme de orçamento (`aws_budgets_budget.painel`) é o aviso.
+
+**Custo a mais:** o balanceador interno custa cerca de US$ 18 a 22 por mês; o CloudFront, com menos de dez pessoas,
+centavos. Fora do horário (21:00 às 08:00), o balanceador responde erro, e o CloudFront mostra a página de erro dele.
+O VPC origin leva uns 10 a 15 minutos para ficar pronto no primeiro `apply`.
+
+## Acesso por túnel (para quem tem conta AWS)
 
 ```sh
 aws ssm start-session --target ecs:visor-maria_<id-da-tarefa>_<id-do-container> \
