@@ -22,12 +22,52 @@ recurso da Maria (docs/decisoes.md, 2026-10-26).
 O papel da instância já inclui a leitura de `/ecs/visor-maria/renovador`, de onde a tela Credencial lê as renovações (#14).
 `ce:GetCostAndUsage` só entra com `ler_custo = true`: é decisão do Ícaro (custo da conta toda, README principal, item 3).
 
-## Aberto e sem login
+## Login com a conta Google
 
-Por decisão do Ícaro (24/11), o painel abre para qualquer pessoa com o endereço, sem login (o Cognito e a autenticação ficam
-para depois). Ele mostra validade da credencial do Verde, gasto, infraestrutura e problemas da Maria, só agregados e nenhuma
-conversa. Cada abertura de tela faz consultas pagas ao CloudWatch, então um painel aberto aceita visitantes que gastam
-dinheiro: o alarme de orçamento é o aviso.
+O painel só abre depois do login com uma conta Google, e só para os e-mails da lista (decisão da Nicole, 24/11). O
+caminho: o painel manda ao Cognito (`login.tf`), que manda direto ao Google; o Google volta ao Cognito, e o Cognito ao
+painel, que pergunta o e-mail e confere a lista. Sem a configuração ou a lista, o painel **fecha** (503), nunca abre.
+
+**Quem pode abrir: a lista de e-mails.** Fica no Parameter Store, e não no repositório (que é público):
+
+1. Console da AWS, região **São Paulo (sa-east-1)**, **Systems Manager > Parameter Store**.
+2. Abrir `/visor-maria/emails-com-acesso` e clicar em **Editar**.
+3. Os e-mails, separados por vírgula, sem espaço dentro deles: `pessoa.um@gmail.com,pessoa.dois@gmail.com`.
+4. Salvar. Vale em até um minuto, para entrar e para sair: tirar um e-mail fecha o painel para aquela pessoa sem esperar o
+   login dela vencer. O `terraform apply` não desfaz a edição.
+
+Para editar, o usuário precisa da política `visor-maria-editar-emails` (`terraform output politica_para_editar_a_lista`),
+que o Ícaro anexa: ela só lê e edita esse parâmetro.
+
+**O Cognito é o `coilab-users` (us-east-1, domínio `coilab-auth`), que já tem o Google.** Ele é do projeto CoiLab:
+o Visor tem um **cliente próprio** nele e não mexe no cliente `coilab-web`. Os usuários do CoiLab estão no mesmo grupo,
+mas só entra no Visor quem está na lista de e-mails. O que falta, na ordem:
+
+1. **Cognito, no `coilab-users`:**
+   - **Clientes da aplicação > Criar:** tipo **Aplicação de página única (SPA)** (sem segredo), nome `visor-maria`;
+     URL de retorno e URL de saída de `terraform output retorno_e_saida_no_cognito` (e, para testar na máquina,
+     `http://localhost:8060/auth/callback` e `http://localhost:8060/saiu`); provedor **só o Google**; escopos
+     `openid` e `email`;
+   - **Provedores sociais e externos > Google:** acrescentar ao mapeamento `email_verified` ← `email_verified`. Sem ele,
+     o Visor recusa todo login (só aceita e-mail confirmado). Não muda nada para o CoiLab, mas o grupo é dele: combinar
+     com o Ícaro.
+   - O grupo tem um gatilho **PreAuthentication** (Lambda do CoiLab), que roda para todo cliente do grupo. Se ele
+     barrar quem não é do CoiLab, o login do Visor falha: conferir com o Ícaro.
+2. **Terraform** (quem tem o papel do painel): o cliente `visor-maria` já está em `cliente_do_login`
+   (`5f9m55vv6uo9g8m1gsp9raemmh`). Num arquivo local `login.auto.tfvars` (fora do git), a primeira versão da lista,
+   `emails_com_acesso = ["pessoa.um@gmail.com"]`; depois `terraform apply`. Ele cria `/visor-maria/login`,
+   `/visor-maria/emails-com-acesso`, a política `visor-maria-editar-emails` e a leitura dos dois pelo painel.
+3. **Publicar a imagem nova**: ela já vem com `PAINEL_LOGIN=cognito`. Imagem nova antes do passo 2 deixa o painel
+   fechado (503) até o apply.
+
+O Google Cloud Console não muda: o domínio `coilab-auth` já está autorizado lá. Se o app do Google estiver "em teste",
+só as contas cadastradas como usuárias de teste entram.
+
+O login dura 8 horas, e todo mundo entra de novo a cada dia (a chave da sessão é recriada quando a instância liga). Rodando
+na máquina (`uv run`), sem `PAINEL_LOGIN`, o painel continua abrindo sem login.
+
+Cada abertura de tela faz consultas pagas ao CloudWatch; com o login, só quem está na lista dispara essas consultas, e o
+alarme de orçamento continua como aviso.
 
 **Por que `cloudfront.net` e não `sslip.io`:** o `sslip.io` (DNS dinâmico) é bloqueado por firewalls corporativos, como o
 FortiGuard da Defensoria, e o Let's Encrypt recusa nomes `ec2-*.amazonaws.com`. O endereço do CloudFront é da AWS e tem
@@ -35,7 +75,8 @@ certificado próprio, sem precisar de domínio.
 
 **Limite conhecido:** o trecho CloudFront → EC2 é HTTP, e a lista de IPs do CloudFront é de todos os clientes dele: quem criar
 uma distribuição própria apontando para o IP da instância também chega à porta 80. Para fechar isso, um cabeçalho secreto
-conferido na instância, ou um WAF. Com um domínio da Defensoria, o certificado e o login ficam no lugar certo.
+conferido na instância, ou um WAF. Quem chegar por esse caminho cai no mesmo login, que é conferido pelo próprio painel.
+Com um domínio da Defensoria, o certificado fica no lugar certo.
 
 ## Custo (estimativa, sem conferir os preços de São Paulo)
 

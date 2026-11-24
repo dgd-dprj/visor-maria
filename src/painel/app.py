@@ -14,7 +14,7 @@ from pathlib import Path
 import dash
 from dash import ALL, Dash, Input, Output, State, callback, clientside_callback, dcc, html
 
-from painel import navegador
+from painel import login, navegador
 from painel.componentes.cabecalho import TEMAS
 from painel.componentes.menu import menu
 from painel.dados import fonte_simulada_ligada, obter_fonte, sem_credencial_da_aws
@@ -62,6 +62,10 @@ app = Dash(
     suppress_callback_exceptions=True,
 )
 server = app.server
+
+# Login com a conta Google, só para os e-mails da lista (login.py). Ligado na imagem
+# Docker (PAINEL_LOGIN=cognito); rodando na máquina, sem a variável, fica desligado.
+login.instalar(server)
 
 # Falha na subida, e não na primeira tela, se PAINEL_FONTE pedir uma fonte que não existe.
 obter_fonte()

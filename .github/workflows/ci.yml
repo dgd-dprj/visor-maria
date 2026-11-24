@@ -85,15 +85,23 @@ jobs:
 
       - name: A imagem sobe e responde
         run: |
-          docker run -d --name painel -p 8050:8050 visor-maria:ci
+          # As telas, com o login desligado. E a imagem como vai ao ar (login ligado), sem acesso à AWS:
+          # a tela manda ao login (302), a tela de login abre (200), o botão fecha (503) e o Dash recusa (401).
+          docker run -d --name painel -p 8050:8050 -e PAINEL_LOGIN=desligado visor-maria:ci
+          docker run -d --name painel-login -p 8051:8050 visor-maria:ci
           for _ in $(seq 1 30); do
-            if curl -fsS http://localhost:8050/ > /dev/null; then
+            if curl -fsS http://localhost:8050/ > /dev/null && curl -s -o /dev/null http://localhost:8051/login; then
               for tela in /credencial /atendimento /fluxos /sistema /infra /dia /aplicacao /ia /qa; do
                 curl -fsS "http://localhost:8050$tela" > /dev/null
               done
+              test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8051/login)" = 200
+              test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8051/login/google)" = 503
+              test "$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8051/)" = 302
+              test "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://localhost:8051/_dash-update-component)" = 401
               exit 0
             fi
             sleep 1
           done
           docker logs painel
+          docker logs painel-login
           exit 1

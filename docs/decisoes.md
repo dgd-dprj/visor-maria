@@ -2,6 +2,39 @@
 
 Cada decisão com a data, quem decidiu, o motivo e o que ela custa.
 
+## 2026-11-24: login com a conta Google, só para os e-mails da lista
+
+**Decisão (Nicole).** O painel deixa de abrir para qualquer pessoa com o endereço:
+entra quem fizer login com a conta Google e estiver na lista de e-mails. Fecha o
+item "autenticação" pendente da decisão do mesmo dia (painel online, abaixo).
+
+**Como.** O grupo do Cognito é o `coilab-users` (us-east-1), do CoiLab, que já
+tem o Google configurado: o Visor ganha um cliente próprio nele (público, só o
+Google) e não toca no cliente do CoiLab. Um grupo só do Visor chegou a ser criado
+em São Paulo e foi deixado de lado, porque faltava configurar o Google nele. O
+painel manda direto ao Google (`identity_provider=Google`), troca o código com
+PKCE (cliente público, sem segredo no painel) e pergunta o e-mail ao Cognito. A
+lista fica no Parameter Store (`/visor-maria/emails-com-acesso`), editada no
+console, porque o repositório é público; o painel a relê a cada minuto e a confere
+em toda requisição, então tirar um e-mail fecha o acesso em até um minuto. Sem a
+configuração ou a lista, o painel fecha (503). O login vale 8 horas e é refeito a
+cada dia (a chave da sessão é recriada quando a instância liga).
+
+**Alternativas.** Código por e-mail no Cognito, sem Google (fica fácil de somar
+depois, no mesmo Cognito); Cloudflare Access (exige o domínio na Cloudflare). O
+Google ganhou porque a equipe já tem conta Google.
+
+**A tela de login (Nicole).** Fica fora do Dash e já com a identidade da
+Defensoria, enquanto o visual novo do Visor não chega: à esquerda, o rosto da
+Maria numa moldura redonda com borda dourada e uma animação leve (desligada para
+quem pede menos movimento no sistema); à direita, o cartão com a logo oficial da
+Defensoria e o botão do Google. As fontes são as do portal da Defensoria de 2025
+(League Spartan nos títulos, DM Sans no texto). A imagem fica em `assets/`,
+reduzida da arte original (18 MB) para 108 KB.
+
+**Custo.** O Cognito é gratuito nesse volume (menos de dez pessoas); o Parameter
+Store padrão também. O cliente OAuth do Google é gratuito.
+
 ## 2026-11-17: o tom das conversas de verdade, só em números
 
 **Decisão (Nicole).** O quadro "Tom da IA" mostra primeiro as métricas das perguntas de

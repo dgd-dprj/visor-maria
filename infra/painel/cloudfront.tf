@@ -1,5 +1,5 @@
 # O painel online: CloudFront (HTTPS, endereço xxxx.cloudfront.net, certificado da AWS) -> a EC2, pela porta 80.
-# Sem domínio nosso e sem login por enquanto (a autenticação fica para depois).
+# Sem domínio nosso. O login com Google é conferido pelo próprio painel (login.tf e src/painel/login.py).
 
 # Políticas gerenciadas da AWS: sem cache (o painel é dinâmico) e todos os cabeçalhos, cookies e a query vão à origem.
 data "aws_cloudfront_cache_policy" "sem_cache" {
