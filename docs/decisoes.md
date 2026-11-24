@@ -148,28 +148,27 @@ dar ao papel da tarefa do painel a leitura do grupo `/ecs/visor-maria/renovador`
 (README, "Permissões", item 6); decidir o que fazer com o workflow da Maria antes
 de ligar `RENOVADOR_LIGADO`.
 
-## 2026-11-24: o painel online pelo CloudFront, sem login por enquanto
+## 2026-11-24: o painel online numa EC2 simples, aberto e sem login
 
-**Decisão (Ícaro).** Vai ter gente sem conta AWS usando o painel, então ele fica
-online pelo CloudFront, sem o túnel (a etapa 2 do README). O login (Cognito ou
-outro) fica para depois: por ora, "só quero que esteja online".
+**Decisão (Ícaro).** Vai ter gente sem conta AWS usando o painel (menos de dez
+pessoas), então ele fica online. O pedido é o mais simples possível: sem VPC
+própria, sem balanceador, sem CloudFront e sem ECS; a imagem fica no ECR e roda
+com Docker numa instância Linux. Login (Cognito ou outro) e HTTPS ficam para depois.
 
-**Como.** CloudFront (endereço `*.cloudfront.net`, HTTPS) → VPC origin → uma EC2
-pequena em subrede privada (`infra/painel`), sem balanceador e sem ECS. Escolhido
-por custo (Ícaro, 24/11): para menos de dez pessoas, Fargate mais o balanceador
-interno que o CloudFront exige custaria cerca de US$ 30 por mês; a EC2 `t3.micro`,
-ligada de 08:00 às 21:00, fica na casa de US$ 10 a 14. Sem domínio, não há
-certificado no balanceador, e por isso nada de login pelo Cognito agora. A
-etapa 1 do README (túnel) continua valendo, agora pelo Session Manager na
-instância, para quem tem conta AWS.
+**Como.** `infra/painel`: uma EC2 `t3.micro` na **VPC padrão** da conta, com IP
+fixo e a porta 80 aberta (`cidrs_permitidos`, padrão `0.0.0.0/0`), que puxa a
+imagem do ECR num serviço do systemd. Liga às 08:00 e desliga às 21:00. Custo
+estimado de US$ 14 a 17 por mês, contra cerca de US$ 30 de Fargate mais o
+balanceador interno que o CloudFront com VPC origin exigiria. Esta decisão
+substitui o túnel do Session Manager como acesso principal (ele continua para
+quem tem conta AWS) e as duas tentativas anteriores (ECS e EC2 atrás de CloudFront).
 
-**O risco, aceito.** Sem login, qualquer pessoa com o endereço abre o painel e
-dispara consultas pagas ao CloudWatch. Ele só mostra agregados (regra 4 continua:
-nenhuma conversa identificada), mas expõe validade de credencial, gasto e
-infraestrutura. Defesas opcionais no `apply`: lista de IPs por WAF
-(`ips_permitidos`, sem valor padrão, para a escolha ser explícita) e limite por
-país (`paises_permitidos`, padrão BR). O alarme de orçamento avisa se o gasto
-subir. **Pendente:** autenticação.
+**O risco, aceito.** Sem login e sem HTTPS, qualquer pessoa com o endereço abre
+o painel e dispara consultas pagas ao CloudWatch, e o tráfego não é criptografado.
+Ele só mostra agregados (a regra 4 continua: nenhuma conversa identificada), mas
+expõe validade de credencial, gasto e infraestrutura. Para fechar: trocar
+`cidrs_permitidos` pelos IPs do escritório; para HTTPS, um CloudFront na frente.
+O alarme de orçamento avisa se o gasto subir. **Pendente:** autenticação e HTTPS.
 
 ## 2026-11-10: a regra 4 passa a ser "nunca identificar a conversa"
 

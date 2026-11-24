@@ -1,22 +1,14 @@
-# Os recursos da Maria são consultados por nome (docs/decisoes.md, 2026-10-26, regra 2), nunca pelo estado dela.
-
+# Sem VPC própria nem da Maria: a instância usa a VPC padrão da conta (docs/decisoes.md, 2026-11-24).
 data "aws_caller_identity" "atual" {}
 
-data "aws_vpc" "maria" {
-  filter {
-    name   = "tag:Name"
-    values = [var.vpc_da_maria]
-  }
+data "aws_vpc" "padrao" {
+  default = true
 }
 
-data "aws_subnets" "privadas" {
+data "aws_subnets" "padrao" {
   filter {
     name   = "vpc-id"
-    values = [data.aws_vpc.maria.id]
-  }
-  filter {
-    name   = "tag:Name"
-    values = [for s in var.subredes_privadas : "${var.vpc_da_maria}-${s}"]
+    values = [data.aws_vpc.padrao.id]
   }
 }
 

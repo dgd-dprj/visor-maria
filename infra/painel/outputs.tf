@@ -19,6 +19,6 @@ output "segredo_do_github" {
 }
 
 output "endereco_do_painel" {
-  description = "Onde o painel abre (HTTPS)."
-  value       = "https://${aws_cloudfront_distribution.painel.domain_name}"
+  description = "Onde o painel abre (HTTP, sem login)."
+  value       = "http://${aws_eip.painel.public_ip}"
 }

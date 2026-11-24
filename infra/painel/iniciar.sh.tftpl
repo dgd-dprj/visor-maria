@@ -14,7 +14,7 @@ docker pull ${imagem}
 # O token do GitHub vai por arquivo (só root lê, na memória), nunca na linha de comando.
 install -m 600 /dev/null /run/visor-maria.env
 printf 'GITHUB_TOKEN=%s\n' "$(aws secretsmanager get-secret-value --secret-id ${segredo} --query SecretString --output text --region ${regiao})" > /run/visor-maria.env
-exec docker run --rm --name painel -p 8050:8050 --env-file /run/visor-maria.env \
+exec docker run --rm --name painel -p 80:8050 --env-file /run/visor-maria.env \
   -e PAINEL_FONTE=real -e AWS_REGION=${regiao} -e PAINEL_CACHE=/tmp/visor-maria-cache \
   --log-driver awslogs --log-opt awslogs-region=${regiao} --log-opt awslogs-group=${grupo} ${imagem}
 EOS

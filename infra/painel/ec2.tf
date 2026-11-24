@@ -10,15 +10,15 @@ resource "aws_secretsmanager_secret" "github" {
   description = "Token só de leitura do Actions do maria-langgraph-pp, usado pelo painel (GITHUB_TOKEN)"
 }
 
-# Uma instância pequena, em subrede privada e sem endereço público, que roda a imagem Docker do painel. O painel não
+# Uma instância pequena, na VPC padrão, que roda a imagem Docker do painel. O painel não
 # guarda estado (o cache em disco é descartável), então a instância pode ser trocada à vontade.
 resource "aws_instance" "painel" {
   ami                         = data.aws_ssm_parameter.ami.value
   instance_type               = var.tipo_da_instancia
-  subnet_id                   = data.aws_subnets.privadas.ids[0]
+  subnet_id                   = sort(data.aws_subnets.padrao.ids)[0]
   vpc_security_group_ids      = [aws_security_group.painel.id]
   iam_instance_profile        = aws_iam_instance_profile.painel.name
-  associate_public_ip_address = false
+  associate_public_ip_address = true
 
   metadata_options {
     http_tokens                 = "required"
@@ -48,4 +48,10 @@ resource "aws_instance" "painel" {
   tags = {
     Name = "visor-maria"
   }
+}
+
+# IP fixo: sem ele, o endereço mudaria toda vez que a instância desliga à noite.
+resource "aws_eip" "painel" {
+  instance = aws_instance.painel.id
+  domain   = "vpc"
 }
