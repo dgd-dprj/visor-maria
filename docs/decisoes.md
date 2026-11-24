@@ -25,9 +25,10 @@ depois, no mesmo Cognito); Cloudflare Access (exige o domínio na Cloudflare). O
 Google ganhou porque a equipe já tem conta Google.
 
 **A tela de login (Nicole).** Fica fora do Dash e já com a identidade da
-Defensoria, enquanto o visual novo do Visor não chega: à esquerda, o rosto da
-Maria numa moldura redonda com borda dourada e uma animação leve (desligada para
-quem pede menos movimento no sistema); à direita, o cartão com a logo oficial da
+Defensoria, enquanto o visual novo do Visor não chega: à esquerda, "Boas-vindas",
+o rosto da Maria numa moldura redonda com borda dourada e uma animação leve
+(desligada para quem pede menos movimento no sistema) e uma frase sobre para que
+serve o Visor; à direita, o cartão com a logo oficial da
 Defensoria e o botão do Google. As fontes são as do portal da Defensoria de 2025
 (League Spartan nos títulos, DM Sans no texto). A imagem fica em `assets/`,
 reduzida da arte original (18 MB) para 108 KB.

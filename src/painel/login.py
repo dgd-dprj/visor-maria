@@ -227,11 +227,16 @@ _ESTILO = """
 *{box-sizing:border-box}
 body{margin:0;min-height:100vh;background:var(--fundo);color:var(--texto);font-family:"DM Sans","Segoe UI",system-ui,sans-serif;line-height:1.5}
 .tela{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);min-height:100vh}
-.marca{position:relative;overflow:hidden;display:flex;align-items:center;justify-content:center;padding:48px;background:radial-gradient(80% 65% at 50% 50%,var(--verde-claro) 0%,var(--verde) 55%,var(--verde-escuro) 100%);border-right:4px solid var(--dourado)}
-.marca::before,.marca::after{content:"";position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);aspect-ratio:1;border-radius:50%;pointer-events:none;animation:pulsar 6s ease-in-out infinite}
-.marca::before{width:min(84%,580px);border:1px solid rgba(204,198,146,.5);background:radial-gradient(circle,rgba(204,198,146,.20) 0%,rgba(204,198,146,0) 70%)}
-.marca::after{width:min(108%,760px);border:1px solid rgba(204,198,146,.18);animation-delay:-3s}
-.moldura{position:relative;z-index:1;width:min(64%,440px);aspect-ratio:1;border-radius:50%;overflow:hidden;border:6px solid var(--dourado);background:radial-gradient(circle at 50% 38%,#fbf8ec 0%,#ece6cb 100%);box-shadow:0 0 0 12px rgba(204,198,146,.14),0 34px 60px -24px rgba(0,0,0,.5);animation:entrar .9s cubic-bezier(.2,.7,.2,1) both,flutuar 6s ease-in-out .9s infinite}
+.marca{position:relative;overflow:hidden;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:44px;padding:48px;background:radial-gradient(80% 65% at 50% 42%,var(--verde-claro) 0%,var(--verde) 55%,var(--verde-escuro) 100%);border-right:4px solid var(--dourado)}
+.retrato{position:relative;width:min(56%,340px);aspect-ratio:1}
+.retrato::before,.retrato::after{content:"";position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);aspect-ratio:1;border-radius:50%;pointer-events:none;animation:pulsar 6s ease-in-out infinite}
+.retrato::before{width:124%;border:1px solid rgba(204,198,146,.5);background:radial-gradient(circle,rgba(204,198,146,.20) 0%,rgba(204,198,146,0) 70%)}
+.retrato::after{width:152%;border:1px solid rgba(204,198,146,.18);animation-delay:-3s}
+.boas-vindas{position:relative;z-index:1;display:flex;flex-direction:column;align-items:center;gap:12px;max-width:440px;margin-top:52px;text-align:center;color:#fff;animation:entrar .9s cubic-bezier(.2,.7,.2,1) .3s both}
+.boas-vindas-titulo{position:relative;z-index:1;margin:0 0 56px;font-family:"League Spartan","DM Sans",sans-serif;font-size:38px;font-weight:700;line-height:1.1;letter-spacing:.06em;text-transform:uppercase;color:var(--palha);text-align:center;text-shadow:0 2px 12px rgba(0,0,0,.35);animation:entrar .9s cubic-bezier(.2,.7,.2,1) .1s both}
+.boas-vindas-texto{margin:0;font-size:16px;line-height:1.55;color:#eef2ea;text-wrap:pretty;text-shadow:0 1px 2px rgba(0,0,0,.55),0 0 14px rgba(11,53,32,.9)}
+.boas-vindas-texto strong{color:var(--palha);font-weight:600}
+.moldura{position:relative;z-index:1;width:100%;aspect-ratio:1;border-radius:50%;overflow:hidden;border:6px solid var(--dourado);background:radial-gradient(circle at 50% 38%,#fbf8ec 0%,#ece6cb 100%);box-shadow:0 0 0 12px rgba(204,198,146,.14),0 34px 60px -24px rgba(0,0,0,.5);animation:entrar .9s cubic-bezier(.2,.7,.2,1) both,flutuar 6s ease-in-out .9s infinite}
 .maria{display:block;width:100%;height:100%;object-fit:cover}
 @keyframes entrar{from{opacity:0;transform:translateY(18px) scale(.94)}to{opacity:1;transform:none}}
 @keyframes flutuar{0%,100%{transform:translateY(0)}50%{transform:translateY(-10px)}}
@@ -251,8 +256,8 @@ h1{margin:6px 0 0;font-family:"League Spartan","DM Sans",sans-serif;font-size:28
 .botao-google:hover{background:#fafbf8;border-color:var(--verde)}
 .secundaria{align-self:center;color:var(--verde);font-size:14px}
 .cartao .nota{margin:4px 0 0;font-size:13px;color:var(--apagado);text-align:center}
-@media (prefers-reduced-motion:reduce){.botao{transition:none}.botao:hover{transform:none}.moldura,.cartao,.marca::before,.marca::after{animation:none}}
-@media (max-width:760px){.tela{grid-template-columns:1fr;grid-template-rows:auto 1fr}.marca{height:240px;padding:24px;border-right:0;border-bottom:4px solid var(--dourado)}.marca::before{width:230px}.marca::after{width:320px}.moldura{width:168px;border-width:4px;box-shadow:0 0 0 8px rgba(204,198,146,.14),0 20px 40px -20px rgba(0,0,0,.5)}.topo{padding-bottom:16px}.logo{width:180px}.area{justify-content:flex-start;padding:28px 16px}.cartao{padding:28px 22px;border-radius:16px}h1{font-size:24px}}
+@media (prefers-reduced-motion:reduce){.botao{transition:none}.botao:hover{transform:none}.moldura,.cartao,.boas-vindas,.boas-vindas-titulo,.retrato::before,.retrato::after{animation:none}}
+@media (max-width:760px){.tela{grid-template-columns:1fr;grid-template-rows:auto 1fr}.marca{gap:18px;padding:28px 20px 30px;border-right:0;border-bottom:4px solid var(--dourado)}.retrato{width:140px}.moldura{border-width:4px;box-shadow:0 0 0 8px rgba(204,198,146,.14),0 20px 40px -20px rgba(0,0,0,.5)}.topo{padding-bottom:16px}.logo{width:180px}.boas-vindas{gap:8px;margin-top:22px}.boas-vindas-titulo{font-size:24px;margin-bottom:22px}.boas-vindas-texto{font-size:14.5px}.area{justify-content:flex-start;padding:28px 16px}.cartao{padding:28px 22px;border-radius:16px}h1{font-size:24px}}
 """
 
 _G_DO_GOOGLE = (
@@ -290,7 +295,14 @@ def _pagina(
         f"<style>{_ESTILO}</style></head><body>"
         '<main class="tela">'
         '<section class="marca">'
+        '<p class="boas-vindas-titulo">Boas-vindas</p>'
+        '<div class="retrato">'
         f'<div class="moldura"><img class="maria" src="{IMAGEM_DA_MARIA}" alt="Maria, a assistente da Defensoria" width="960" height="960"></div>'
+        "</div>"
+        '<div class="boas-vindas">'
+        '<p class="boas-vindas-texto"><strong>O painel onde a equipe acompanha a Maria:</strong> como estão os atendimentos e os fluxos, '
+        "quanto ela gasta e se tudo está funcionando.</p>"
+        "</div>"
         "</section>"
         '<section class="area"><div class="cartao">'
         f'<div class="topo"><img class="logo" src="{LOGO_DA_DEFENSORIA}" alt="Defensoria Pública do Estado do Rio de Janeiro" width="220" height="47"></div>'

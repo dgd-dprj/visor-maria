@@ -216,6 +216,7 @@ def test_a_tela_de_login_tem_o_botao_do_google_e_guarda_a_volta(cliente: FlaskCl
 def test_a_tela_de_login_mostra_a_maria_e_a_logo_da_defensoria(cliente: FlaskClient) -> None:
     html = cliente.get("/login").get_data(as_text=True)
     assert f'src="{login.IMAGEM_DA_MARIA}"' in html and f'src="{login.LOGO_DA_DEFENSORIA}"' in html
+    assert '<p class="boas-vindas-titulo">Boas-vindas</p>' in html
     # a imagem está em assets/, que o Dash serve e o login deixa livre
     assert login.IMAGEM_DA_MARIA.startswith(login.PREFIXOS_LIVRES[0])
     assert (Path(login.__file__).parent / login.IMAGEM_DA_MARIA.lstrip("/")).is_file()
