@@ -1,6 +1,7 @@
 #!/bin/bash
-# Roda uma vez, na criação da instância. O painel é um serviço do systemd, que sobe a cada ligada da instância
-# (ela desliga à noite), puxa a imagem mais nova e roda o contêiner. Sem imagem no ECR ainda, tenta de novo a cada minuto.
+# Roda uma vez, na criação da instância. O painel e o Caddy (HTTPS) são serviços do systemd, que sobem a cada ligada da
+# instância (ela desliga à noite): puxam a imagem mais nova e rodam os contêineres. Sem imagem no ECR ainda, tentam de
+# novo a cada minuto. Só a porta 443 fica aberta: o Caddy termina o TLS e fala com o painel pela rede interna do Docker.
 set -euo pipefail
 
 dnf install -y docker
@@ -9,16 +10,39 @@ systemctl enable --now docker
 cat > /usr/local/bin/visor-maria-iniciar.sh <<'EOS'
 #!/bin/bash
 set -euo pipefail
+docker network create painel 2>/dev/null || true
 aws ecr get-login-password --region ${regiao} | docker login --username AWS --password-stdin ${registro}
 docker pull ${imagem}
 # O token do GitHub vai por arquivo (só root lê, na memória), nunca na linha de comando.
 install -m 600 /dev/null /run/visor-maria.env
 printf 'GITHUB_TOKEN=%s\n' "$(aws secretsmanager get-secret-value --secret-id ${segredo} --query SecretString --output text --region ${regiao})" > /run/visor-maria.env
-exec docker run --rm --name painel -p 80:8050 --env-file /run/visor-maria.env \
+exec docker run --rm --name painel --network painel --env-file /run/visor-maria.env \
   -e PAINEL_FONTE=real -e AWS_REGION=${regiao} -e PAINEL_CACHE=/tmp/visor-maria-cache \
   --log-driver awslogs --log-opt awslogs-region=${regiao} --log-opt awslogs-group=${grupo} ${imagem}
 EOS
 chmod 755 /usr/local/bin/visor-maria-iniciar.sh
+
+# O endereço é o IP fixo da instância escrito como <ip-com-hifens>.sslip.io, que resolve para esse IP. O IP fixo só
+# aparece nos metadados alguns segundos depois da ligada, então o script espera por ele.
+cat > /usr/local/bin/visor-maria-https.sh <<'EOS'
+#!/bin/bash
+set -euo pipefail
+IP=""
+for _ in $(seq 1 60); do
+  TOKEN=$(curl -sS -X PUT http://169.254.169.254/latest/api/token -H 'X-aws-ec2-metadata-token-ttl-seconds: 60')
+  IP=$(curl -sS -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/public-ipv4 || true)
+  case "$IP" in *.*.*.*) break ;; *) IP=""; sleep 5 ;; esac
+done
+[ -n "$IP" ] || { echo "sem IP publico nos metadados" >&2; exit 1; }
+HOST="$(echo "$IP" | tr . -).sslip.io"
+mkdir -p /etc/visor-maria
+printf '%s {\n  reverse_proxy painel:8050\n}\n' "$HOST" > /etc/visor-maria/Caddyfile
+docker network create painel 2>/dev/null || true
+exec docker run --rm --name https --network painel -p 443:443 \
+  -v /etc/visor-maria/Caddyfile:/etc/caddy/Caddyfile:ro -v caddy_data:/data \
+  public.ecr.aws/docker/library/caddy:2
+EOS
+chmod 755 /usr/local/bin/visor-maria-https.sh
 
 cat > /etc/systemd/system/visor-maria.service <<'EOS'
 [Unit]
@@ -36,5 +60,21 @@ RestartSec=60
 WantedBy=multi-user.target
 EOS
 
+cat > /etc/systemd/system/visor-maria-https.service <<'EOS'
+[Unit]
+Description=Visor Maria, HTTPS (Caddy)
+After=docker.service network-online.target visor-maria.service
+Requires=docker.service
+
+[Service]
+ExecStartPre=-/usr/bin/docker rm -f https
+ExecStart=/usr/local/bin/visor-maria-https.sh
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target
+EOS
+
 systemctl daemon-reload
-systemctl enable --now visor-maria.service
+systemctl enable --now visor-maria.service visor-maria-https.service

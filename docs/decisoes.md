@@ -153,22 +153,24 @@ de ligar `RENOVADOR_LIGADO`.
 **Decisão (Ícaro).** Vai ter gente sem conta AWS usando o painel (menos de dez
 pessoas), então ele fica online. O pedido é o mais simples possível: sem VPC
 própria, sem balanceador, sem CloudFront e sem ECS; a imagem fica no ECR e roda
-com Docker numa instância Linux. Login (Cognito ou outro) e HTTPS ficam para depois.
+com Docker numa instância Linux. Login (Cognito ou outro) fica para depois. Só a porta 443 fica aberta (pedido do Ícaro, 24/11).
 
 **Como.** `infra/painel`: uma EC2 `t3.micro` na **VPC padrão** da conta, com IP
-fixo e a porta 80 aberta (`cidrs_permitidos`, padrão `0.0.0.0/0`), que puxa a
-imagem do ECR num serviço do systemd. Liga às 08:00 e desliga às 21:00. Custo
+fixo e só a porta 443 aberta (`cidrs_permitidos`, padrão `0.0.0.0/0`), que puxa a
+imagem do ECR num serviço do systemd. O HTTPS é de um Caddy na frente do painel,
+com certificado do Let's Encrypt para `<ip>.sslip.io`, sem precisar de domínio. Liga às 08:00 e desliga às 21:00. Custo
 estimado de US$ 14 a 17 por mês, contra cerca de US$ 30 de Fargate mais o
 balanceador interno que o CloudFront com VPC origin exigiria. Esta decisão
 substitui o túnel do Session Manager como acesso principal (ele continua para
 quem tem conta AWS) e as duas tentativas anteriores (ECS e EC2 atrás de CloudFront).
 
-**O risco, aceito.** Sem login e sem HTTPS, qualquer pessoa com o endereço abre
-o painel e dispara consultas pagas ao CloudWatch, e o tráfego não é criptografado.
+**O risco, aceito.** Sem login, qualquer pessoa com o endereço abre o painel e
+dispara consultas pagas ao CloudWatch.
 Ele só mostra agregados (a regra 4 continua: nenhuma conversa identificada), mas
 expõe validade de credencial, gasto e infraestrutura. Para fechar: trocar
-`cidrs_permitidos` pelos IPs do escritório; para HTTPS, um CloudFront na frente.
-O alarme de orçamento avisa se o gasto subir. **Pendente:** autenticação e HTTPS.
+`cidrs_permitidos` pelos IPs do escritório (o que pode impedir a renovação do
+certificado). O alarme de orçamento avisa se o gasto subir. **Pendente:**
+autenticação; e um domínio próprio no lugar do `sslip.io`.
 
 ## 2026-11-10: a regra 4 passa a ser "nunca identificar a conversa"
 
