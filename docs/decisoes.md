@@ -148,29 +148,33 @@ dar ao papel da tarefa do painel a leitura do grupo `/ecs/visor-maria/renovador`
 (README, "Permissões", item 6); decidir o que fazer com o workflow da Maria antes
 de ligar `RENOVADOR_LIGADO`.
 
-## 2026-11-24: o painel online numa EC2 simples, aberto e sem login
+## 2026-11-24: o painel online numa EC2 simples, atrás do CloudFront, aberto e sem login
 
 **Decisão (Ícaro).** Vai ter gente sem conta AWS usando o painel (menos de dez
 pessoas), então ele fica online. O pedido é o mais simples possível: sem VPC
-própria, sem balanceador, sem CloudFront e sem ECS; a imagem fica no ECR e roda
-com Docker numa instância Linux. Login (Cognito ou outro) fica para depois. Só a porta 443 fica aberta (pedido do Ícaro, 24/11).
+própria, sem balanceador e sem ECS; a imagem fica no ECR e roda com Docker numa
+instância Linux. Login (Cognito ou outro) fica para depois.
 
 **Como.** `infra/painel`: uma EC2 `t3.micro` na **VPC padrão** da conta, com IP
-fixo e só a porta 443 aberta (`cidrs_permitidos`, padrão `0.0.0.0/0`), que puxa a
-imagem do ECR num serviço do systemd. O HTTPS é de um Caddy na frente do painel,
-com certificado do Let's Encrypt para `<ip>.sslip.io`, sem precisar de domínio. Liga às 08:00 e desliga às 21:00. Custo
-estimado de US$ 14 a 17 por mês, contra cerca de US$ 30 de Fargate mais o
-balanceador interno que o CloudFront com VPC origin exigiria. Esta decisão
-substitui o túnel do Session Manager como acesso principal (ele continua para
-quem tem conta AWS) e as duas tentativas anteriores (ECS e EC2 atrás de CloudFront).
+fixo, que puxa a imagem do ECR num serviço do systemd e a publica na porta 80. Na
+frente, um **CloudFront** com o endereço `*.cloudfront.net` e o certificado da
+AWS, sem domínio nosso; a porta 80 da instância só aceita os IPs do CloudFront
+(lista gerenciada da AWS). Liga às 08:00 e desliga às 21:00. Custo estimado de
+US$ 14 a 17 por mês, contra cerca de US$ 30 de Fargate mais o balanceador.
+
+**O que não deu certo.** Primeiro, o HTTPS pelo próprio Caddy da instância, com
+certificado do Let's Encrypt para `<ip>.sslip.io`: funcionou, mas o firewall da
+Defensoria (FortiGuard) bloqueia o `sslip.io` como "Dynamic DNS". Depois, o nome
+`ec2-*.amazonaws.com`: o Let's Encrypt recusa emitir para ele ("proibido por
+política"). O CloudFront resolve as duas coisas sem domínio nosso.
 
 **O risco, aceito.** Sem login, qualquer pessoa com o endereço abre o painel e
-dispara consultas pagas ao CloudWatch.
-Ele só mostra agregados (a regra 4 continua: nenhuma conversa identificada), mas
-expõe validade de credencial, gasto e infraestrutura. Para fechar: trocar
-`cidrs_permitidos` pelos IPs do escritório (o que pode impedir a renovação do
-certificado). O alarme de orçamento avisa se o gasto subir. **Pendente:**
-autenticação; e um domínio próprio no lugar do `sslip.io`.
+dispara consultas pagas ao CloudWatch. Ele só mostra agregados (a regra 4
+continua: nenhuma conversa identificada), mas expõe validade de credencial, gasto
+e infraestrutura. O trecho CloudFront → EC2 é HTTP, e quem criar uma distribuição
+própria apontando para o IP da instância também chega à porta 80. O alarme de
+orçamento avisa se o gasto subir. **Pendente:** autenticação; cabeçalho secreto
+ou WAF; e, se a Defensoria der um domínio, um subdomínio com certificado próprio.
 
 ## 2026-11-10: a regra 4 passa a ser "nunca identificar a conversa"
 

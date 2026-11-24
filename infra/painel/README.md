@@ -1,15 +1,17 @@
-# O painel na AWS: uma EC2 pequena com Docker (o mais simples)
+# O painel na AWS: uma EC2 pequena com Docker, atrás do CloudFront
 
-O Visor roda numa **EC2 pequena** (`t3.micro`, Amazon Linux 2023) na **VPC padrão** da conta, com um IP fixo e **só a porta 443
-aberta**, rodando a imagem Docker do painel que está no **ECR**, com o **Caddy** na frente para o HTTPS. Sem CloudFront, sem balanceador, sem ECS e sem VPC própria.
-Estado próprio (`visor-maria/painel/terraform.tfstate`); nada é acrescentado dentro de recurso da Maria
-(docs/decisoes.md, 2026-10-26).
+O Visor roda numa **EC2 pequena** (`t3.micro`, Amazon Linux 2023) na **VPC padrão** da conta, com um IP fixo, rodando a
+imagem Docker do painel que está no **ECR**. Na frente dela, um **CloudFront** dá o endereço `https://xxxx.cloudfront.net` e o
+certificado HTTPS (da AWS, sem domínio nosso). A porta 80 da instância só aceita os IPs do CloudFront. Sem balanceador, sem
+ECS, sem VPC própria e sem Caddy. Estado próprio (`visor-maria/painel/terraform.tfstate`); nada é acrescentado dentro de
+recurso da Maria (docs/decisoes.md, 2026-10-26).
 
 | Recurso | Para quê (item do README principal) |
 |---|---|
-| `aws_instance.painel` | EC2 `t3.micro`, disco de 8 GB, IMDSv2; um serviço do systemd puxa a imagem e roda o contêiner (8) |
-| `aws_eip.painel` | IP fixo, para o endereço não mudar quando a instância desliga à noite |
-| `aws_security_group.painel` | só a porta 443 para `cidrs_permitidos` (padrão: todo mundo); saída livre (8) |
+| `aws_instance.painel` | EC2 `t3.micro`, disco de 8 GB, IMDSv2; um serviço do systemd puxa a imagem e roda o contêiner na porta 80 (8) |
+| `aws_cloudfront_distribution.painel` | o endereço público HTTPS (`*.cloudfront.net`); sem cache, métodos completos (o Dash usa POST) |
+| `aws_eip.painel` | IP fixo, para o CloudFront achar a instância depois de ela desligar à noite |
+| `aws_security_group.painel` | porta 80 só para os IPs do CloudFront (lista gerenciada da AWS); saída livre (8) |
 | `aws_ecr_repository.painel` | repositório `visor-maria`, as 10 imagens mais novas (8) |
 | `aws_secretsmanager_secret.github` | `visor-maria/github-token`, sem valor no estado (8) |
 | `visor-maria-painel` | papel da instância, **só leitura**: Logs Insights, métricas, alarmes, ECR, o token do GitHub e o Session Manager (6) |
@@ -20,25 +22,26 @@ Estado próprio (`visor-maria/painel/terraform.tfstate`); nada é acrescentado d
 O papel da instância já inclui a leitura de `/ecs/visor-maria/renovador`, de onde a tela Credencial lê as renovações (#14).
 `ce:GetCostAndUsage` só entra com `ler_custo = true`: é decisão do Ícaro (custo da conta toda, README principal, item 3).
 
-## Aberto e sem login, com HTTPS pelo Caddy
+## Aberto e sem login
 
-Por decisão do Ícaro (24/11), o painel abre para qualquer pessoa, sem login (o Cognito e a autenticação ficam para depois),
-em `https://<ip-com-hifens>.sslip.io`. O **Caddy** roda num segundo contêiner, termina o TLS e pede o certificado ao Let's Encrypt
-sozinho, só pela porta 443 (desafio TLS-ALPN); o `sslip.io` é um DNS público que resolve `54-233-1-2.sslip.io` para `54.233.1.2`,
-então não precisa de domínio. O primeiro certificado leva um minuto depois da ligada. Dependência de terceiros: o `sslip.io`
-(e os limites de emissão do Let's Encrypt, que ele compartilha com outros usuários). Com um domínio seu, troque o nome no Caddyfile
-e aponte o DNS para o IP fixo. Ele mostra validade da credencial do Verde, gasto, infraestrutura e problemas da Maria, só
-agregados e nenhuma conversa. Cada abertura de tela faz consultas pagas ao CloudWatch, então um painel aberto aceita
-visitantes que gastam dinheiro: o alarme de orçamento é o aviso. Para fechar sem login, troque `cidrs_permitidos` pelos IPs
-do escritório (`["203.0.113.4/32"]`). **Cuidado:** o Let's Encrypt valida o certificado de vários IPs que ele escolhe, então
-fechar a porta 443 para o escritório impede o certificado novo (emitido na primeira vez e renovado a cada 60 dias). Fechar de
-verdade pede outro caminho, como um domínio próprio com validação por DNS ou um CloudFront com WAF na frente.
+Por decisão do Ícaro (24/11), o painel abre para qualquer pessoa com o endereço, sem login (o Cognito e a autenticação ficam
+para depois). Ele mostra validade da credencial do Verde, gasto, infraestrutura e problemas da Maria, só agregados e nenhuma
+conversa. Cada abertura de tela faz consultas pagas ao CloudWatch, então um painel aberto aceita visitantes que gastam
+dinheiro: o alarme de orçamento é o aviso.
+
+**Por que `cloudfront.net` e não `sslip.io`:** o `sslip.io` (DNS dinâmico) é bloqueado por firewalls corporativos, como o
+FortiGuard da Defensoria, e o Let's Encrypt recusa nomes `ec2-*.amazonaws.com`. O endereço do CloudFront é da AWS e tem
+certificado próprio, sem precisar de domínio.
+
+**Limite conhecido:** o trecho CloudFront → EC2 é HTTP, e a lista de IPs do CloudFront é de todos os clientes dele: quem criar
+uma distribuição própria apontando para o IP da instância também chega à porta 80. Para fechar isso, um cabeçalho secreto
+conferido na instância, ou um WAF. Com um domínio da Defensoria, o certificado e o login ficam no lugar certo.
 
 ## Custo (estimativa, sem conferir os preços de São Paulo)
 
 Com a instância ligada 13 h por dia: EC2 `t3.micro` cerca de US$ 8, disco cerca de US$ 1, IPv4 público fixo cerca de
 US$ 3,6 (cobrado também com a instância parada), consultas ao CloudWatch cerca de US$ 1 a 3, token no Secrets Manager
-US$ 0,40. **Total na casa de US$ 14 a 17 por mês.** Parada, a instância só cobra disco e IP.
+US$ 0,40, CloudFront centavos. **Total na casa de US$ 14 a 17 por mês.** Parada, a instância só cobra disco e IP.
 
 ## Como aplicar
 
@@ -48,7 +51,6 @@ US$ 0,40. **Total na casa de US$ 14 a 17 por mês.** Parada, a instância só co
 cd infra/painel
 cat > painel.auto.tfvars <<'EOF2'
 emails_do_orcamento = ["equipe@exemplo.org"]
-# cidrs_permitidos  = ["203.0.113.4/32"]   # padrão: aberto a todos
 # ler_custo         = true                 # depois da decisão do item 3
 EOF2
 terraform init
@@ -81,7 +83,7 @@ Sem SSH nem porta de administração: o acesso é pelo Session Manager, e cada s
 
 ```sh
 aws ssm start-session --target <id-da-instancia>     # terminal; o id sai de `terraform output instancia`
-sudo journalctl -u visor-maria -u visor-maria-https  # logs dos dois serviços
+sudo journalctl -u visor-maria                      # log do serviço do painel
 ```
 
 ## Não está aqui
