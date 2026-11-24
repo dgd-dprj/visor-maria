@@ -311,6 +311,8 @@ da Maria (as três regras estão em `docs/decisoes.md`).
 
 ### O Ícaro executa
 
+> O Terraform dos itens 6 a 9 está pronto em `infra/painel` (README da pasta): uma EC2 pequena atrás do CloudFront, em vez de ECS. Falta o Ícaro aplicar. Os itens 4 e 5 (chave no bucket de estado e papel para aplicar o Terraform) continuam dele.
+
 4. **Chave nova no bucket de estado** (`maria-tfstate-185327115563`, chave `visor-maria/terraform.tfstate`) e uso da trava `maria-tf-lock`, que são do stack antigo.
 5. **Um papel para aplicar o Terraform do painel**, restrito a recursos com prefixo `visor-maria`. Com ele, a Nicole aplica dali em diante sem acesso a nada da Maria. (A credencial dela hoje não cria recursos na AWS, pelo que os testes de leitura mostraram; ela não tem permissão nem para simular a própria política.)
 6. **Papel da tarefa do painel, só leitura:**
