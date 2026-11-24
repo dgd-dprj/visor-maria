@@ -1,0 +1,40 @@
+#!/bin/bash
+# Roda uma vez, na criação da instância. O painel é um serviço do systemd, que sobe a cada ligada da instância
+# (ela desliga à noite), puxa a imagem mais nova e roda o contêiner. Sem imagem no ECR ainda, tenta de novo a cada minuto.
+set -euo pipefail
+
+dnf install -y docker
+systemctl enable --now docker
+
+cat > /usr/local/bin/visor-maria-iniciar.sh <<'EOS'
+#!/bin/bash
+set -euo pipefail
+aws ecr get-login-password --region ${regiao} | docker login --username AWS --password-stdin ${registro}
+docker pull ${imagem}
+# O token do GitHub vai por arquivo (só root lê, na memória), nunca na linha de comando.
+install -m 600 /dev/null /run/visor-maria.env
+printf 'GITHUB_TOKEN=%s\n' "$(aws secretsmanager get-secret-value --secret-id ${segredo} --query SecretString --output text --region ${regiao})" > /run/visor-maria.env
+exec docker run --rm --name painel -p 8050:8050 --env-file /run/visor-maria.env \
+  -e PAINEL_FONTE=real -e AWS_REGION=${regiao} -e PAINEL_CACHE=/tmp/visor-maria-cache \
+  --log-driver awslogs --log-opt awslogs-region=${regiao} --log-opt awslogs-group=${grupo} ${imagem}
+EOS
+chmod 755 /usr/local/bin/visor-maria-iniciar.sh
+
+cat > /etc/systemd/system/visor-maria.service <<'EOS'
+[Unit]
+Description=Visor Maria
+After=docker.service network-online.target
+Requires=docker.service
+
+[Service]
+ExecStartPre=-/usr/bin/docker rm -f painel
+ExecStart=/usr/local/bin/visor-maria-iniciar.sh
+Restart=always
+RestartSec=60
+
+[Install]
+WantedBy=multi-user.target
+EOS
+
+systemctl daemon-reload
+systemctl enable --now visor-maria.service

@@ -148,6 +148,29 @@ dar ao papel da tarefa do painel a leitura do grupo `/ecs/visor-maria/renovador`
 (README, "Permissões", item 6); decidir o que fazer com o workflow da Maria antes
 de ligar `RENOVADOR_LIGADO`.
 
+## 2026-11-24: o painel online pelo CloudFront, sem login por enquanto
+
+**Decisão (Ícaro).** Vai ter gente sem conta AWS usando o painel, então ele fica
+online pelo CloudFront, sem o túnel (a etapa 2 do README). O login (Cognito ou
+outro) fica para depois: por ora, "só quero que esteja online".
+
+**Como.** CloudFront (endereço `*.cloudfront.net`, HTTPS) → VPC origin → uma EC2
+pequena em subrede privada (`infra/painel`), sem balanceador e sem ECS. Escolhido
+por custo (Ícaro, 24/11): para menos de dez pessoas, Fargate mais o balanceador
+interno que o CloudFront exige custaria cerca de US$ 30 por mês; a EC2 `t3.micro`,
+ligada de 08:00 às 21:00, fica na casa de US$ 10 a 14. Sem domínio, não há
+certificado no balanceador, e por isso nada de login pelo Cognito agora. A
+etapa 1 do README (túnel) continua valendo, agora pelo Session Manager na
+instância, para quem tem conta AWS.
+
+**O risco, aceito.** Sem login, qualquer pessoa com o endereço abre o painel e
+dispara consultas pagas ao CloudWatch. Ele só mostra agregados (regra 4 continua:
+nenhuma conversa identificada), mas expõe validade de credencial, gasto e
+infraestrutura. Defesas opcionais no `apply`: lista de IPs por WAF
+(`ips_permitidos`, sem valor padrão, para a escolha ser explícita) e limite por
+país (`paises_permitidos`, padrão BR). O alarme de orçamento avisa se o gasto
+subir. **Pendente:** autenticação.
+
 ## 2026-11-10: a regra 4 passa a ser "nunca identificar a conversa"
 
 **Decisão (Nicole).** Para entender os bugs, a tela Atendimento mostra uma linha
