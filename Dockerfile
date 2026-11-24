@@ -23,7 +23,8 @@ WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PATH="/app/.venv/bin:$PATH" \
-    PAINEL_FONTE=real
+    PAINEL_FONTE=real \
+    PAINEL_LOGIN=cognito
 COPY --from=build /app/.venv ./.venv
 # Com pasta própria: o gunicorn 26 grava o socket do servidor de controle em $HOME.
 RUN useradd --system --create-home painel

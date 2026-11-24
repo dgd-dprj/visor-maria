@@ -76,6 +76,13 @@ data "aws_iam_policy_document" "painel" {
     resources = [aws_secretsmanager_secret.github.arn]
   }
 
+  # O login (login.tf): a configuração do Cognito e a lista de e-mails com acesso.
+  statement {
+    sid       = "ConfiguracaoDoLogin"
+    actions   = ["ssm:GetParameter"]
+    resources = [aws_ssm_parameter.login.arn, aws_ssm_parameter.emails_com_acesso.arn]
+  }
+
   dynamic "statement" {
     for_each = var.ler_custo ? [1] : []
     content {

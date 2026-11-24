@@ -14,6 +14,7 @@ import dash
 from dash import dcc, html
 
 from painel.componentes.blocos import aria, icone
+from painel.login import login_ligado
 
 # (nome da tela registrada, rótulo curto no menu, ícone)
 TELAS = (
@@ -87,6 +88,8 @@ def menu() -> list[html.Div | html.Nav]:
                         html.P([html.Span(className="ponto tom-bom"), "ao vivo"], className="ao-vivo"),
                         html.P(id="relogio-texto", className="relogio-texto"),
                         html.P("atualiza a cada minuto", className="relogio-texto"),
+                        # Link comum (e não dcc.Link): sair recarrega a página inteira.
+                        html.P(html.A("Sair", href="/sair"), className="relogio-texto") if login_ligado() else None,
                     ],
                     className="menu-relogio",
                 ),

@@ -40,6 +40,33 @@ variable "emails_do_orcamento" {
 
 
 
+variable "dominio_do_login" {
+  description = "Domínio do grupo de usuários do Cognito, sem https://. É o coilab-users (us-east-1), que já tem o Google: o Visor usa um cliente próprio nele, sem tocar no do CoiLab."
+  type        = string
+  default     = "coilab-auth.auth.us-east-1.amazoncognito.com"
+}
+
+variable "cliente_do_login" {
+  description = "ID do cliente \"visor-maria\" no coilab-users (criado pelo console em 24/11; público, sem segredo: o painel usa PKCE). Não é segredo: aparece no endereço de login."
+  type        = string
+  default     = "5f9m55vv6uo9g8m1gsp9raemmh"
+
+  validation {
+    condition     = can(regex("^[a-z0-9]{20,32}$", var.cliente_do_login))
+    error_message = "Use o ID do cliente do aplicativo no Cognito (letras minúsculas e números)."
+  }
+}
+
+variable "emails_com_acesso" {
+  description = "Primeira versão da lista de quem pode abrir o painel. Depois do primeiro apply, a lista é editada no Parameter Store (/visor-maria/emails-com-acesso), e o apply não a desfaz. Fica no *.auto.tfvars local: o repositório é público."
+  type        = list(string)
+
+  validation {
+    condition     = length(var.emails_com_acesso) > 0 && alltrue([for e in var.emails_com_acesso : can(regex("^[^@,\\s]+@[^@,\\s]+\\.[^@,\\s]+$", e))])
+    error_message = "Informe pelo menos um e-mail, sem vírgula nem espaço dentro dele."
+  }
+}
+
 variable "tipo_da_instancia" {
   description = "Tipo da EC2 do painel. t3.micro (2 vCPU, 1 GB) atende a menos de dez pessoas; o painel guarda o cache em disco, sem estado. A imagem do CI é x86; um tipo ARM (t4g) exigiria construir a imagem para ARM."
   type        = string
