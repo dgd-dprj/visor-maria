@@ -64,13 +64,3 @@ variable "hora_de_ligar" {
   default     = "0 8 * * ? *"
 }
 
-variable "cidrs_permitidos" {
-  description = <<-EOT
-    Quem pode abrir o painel (porta 443, a única aberta), em CIDR. O padrão, ["0.0.0.0/0"], **deixa o painel aberto a qualquer
-    pessoa na internet, sem login** (decisão do Ícaro, 24/11): ele mostra validade da credencial do Verde, gasto,
-    infraestrutura e problemas da Maria, só agregados e nenhuma conversa. Para fechar, ponha só os IPs do escritório,
-    por exemplo ["203.0.113.4/32"].
-  EOT
-  type        = list(string)
-  default     = ["0.0.0.0/0"]
-}

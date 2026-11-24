@@ -19,6 +19,6 @@ output "segredo_do_github" {
 }
 
 output "endereco_do_painel" {
-  description = "Onde o painel abre (HTTPS, sem login): o IP fixo escrito como <ip-com-hifens>.sslip.io, que o Caddy da instância usa para pedir o certificado."
-  value       = "https://${replace(aws_eip.painel.public_ip, ".", "-")}.sslip.io"
+  description = "Onde o painel abre (HTTPS, sem login): o endereço da distribuição do CloudFront."
+  value       = "https://${aws_cloudfront_distribution.painel.domain_name}"
 }
